@@ -5,3 +5,5 @@ logs_ca_sweep/
 __pycache__/
 *.pyc
 *.pyo
+.claude/
+CLAUDE.md
