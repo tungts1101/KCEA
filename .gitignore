@@ -1,0 +1,7 @@
+checkpoints/
+checkpoints_ca_sweep/
+logs/
+logs_ca_sweep/
+__pycache__/
+*.pyc
+*.pyo
