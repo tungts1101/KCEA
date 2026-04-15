@@ -30,14 +30,14 @@ g.manual_seed(0)
 CHECKPOINT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "checkpoints")
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
-CHECKPOINT_SWEEP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "checkpoints_ca_sweep")
-os.makedirs(CHECKPOINT_SWEEP_DIR, exist_ok=True)
+CHECKPOINT_ABLATION_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "checkpoints_ablation")
+os.makedirs(CHECKPOINT_ABLATION_DIR, exist_ok=True)
 
 LOG_DIR = "logs"
 os.makedirs(LOG_DIR, exist_ok=True)
 
-LOG_SWEEP_DIR = "logs_ca_sweep"
-os.makedirs(LOG_SWEEP_DIR, exist_ok=True)
+LOG_ABLATION_DIR = "logs_ablation"
+os.makedirs(LOG_ABLATION_DIR, exist_ok=True)
 
 
 class Learner:
@@ -93,7 +93,7 @@ class Learner:
 
     def _current_storage_bytes(self):
         """Sum bytes of all checkpoint files belonging to this run."""
-        scan_dir = CHECKPOINT_SWEEP_DIR if self._config.get("train_ca_sweep", False) else CHECKPOINT_DIR
+        scan_dir = CHECKPOINT_ABLATION_DIR if self._config.get("train_ablation", False) else CHECKPOINT_DIR
         if not os.path.isdir(scan_dir):
             return 0
         pfx = self.prefix()
@@ -753,7 +753,7 @@ class Learner:
         return "_".join(prefix_parts)
 
     def _ckpt_path(self, filename):
-        ckpt_dir = CHECKPOINT_SWEEP_DIR if self._config.get("train_ca_sweep", False) else CHECKPOINT_DIR
+        ckpt_dir = CHECKPOINT_ABLATION_DIR if self._config.get("train_ablation", False) else CHECKPOINT_DIR
         return os.path.join(ckpt_dir, filename)
 
     def backbone_checkpoint(self, task=-1):
@@ -861,8 +861,8 @@ def run_experiments():
             logging.root.removeHandler(handler)
 
         for config_name, experiment_config in experiment_configs.items():
-            ca_sweep = experiment_config.get("train_ca_sweep", False)
-            active_log_dir = LOG_SWEEP_DIR if ca_sweep else LOG_DIR
+            ablation = BASE_CONFIG.get("train_ablation", False) or experiment_config.get("train_ablation", False)
+            active_log_dir = LOG_ABLATION_DIR if ablation else LOG_DIR
             dir_path = os.path.join(active_log_dir, dataset_name)
             os.makedirs(dir_path, exist_ok=True)
             logfilename = os.path.join(dir_path, config_name + ".log")

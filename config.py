@@ -38,7 +38,7 @@ BASE_CONFIG = {
     "train_merge":        False,
     "train_ca":           False,
 
-    "train_ca_sweep":     False,
+    "train_ablation":     False,
     "train_epochs":       10,
     "train_batch_size":   64,
     "train_base_lr":      1e-2,
