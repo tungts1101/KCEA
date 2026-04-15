@@ -53,7 +53,6 @@ class Learner:
         self.model = Model(config)
         self.model.cuda()
         torch.save(self.model.get_backbone_trainable_params(), self.backbone_checkpoint())
-        self._faa, self._ffm = 0, 0
         self._mlp_faa = 0.0
         self._mlp_ffm = 0.0
         self._mlp_asa = 0.0
@@ -69,15 +68,6 @@ class Learner:
         self._peak_storage_bytes = 0
 
     def learn(self, data_manager):
-        baseline = {
-            "cifar224": 70,
-            "imagenetr": 78,
-            "imageneta": 59,
-            "cub": 85,
-            "omnibenchmark": 73,
-            "vtab": 87
-        }
-        self._aa = 0
         self.data_manager = data_manager
         num_tasks = data_manager.nb_tasks
         self._total_classnum = data_manager.get_total_classnum()
@@ -94,18 +84,10 @@ class Learner:
             self.after_task()
             self._peak_storage_bytes = max(self._peak_storage_bytes, self._current_storage_bytes())
 
-            if self._aa < baseline[self._config["dataset_name"]]:
-                logging.info(
-                    f"Baseline accuracy not reached: {self._aa:.2f} < {baseline[self._config['dataset_name']]:.2f}"
-                )
-                break
-
-        if self._config.get("train_ca"):
-            torch.save(
-                self.model.classifier.state_dict(),
-                self.classifier_alignment_checkpoint(),
-            )
-            logging.info(f"[Alignment] Saved aligned classifier checkpoint.")
+        torch.save(
+            self.model.state_dict(),
+            self.model_checkpoint(),
+        )
 
         self._log_final_summary()
 
@@ -242,108 +224,84 @@ class Learner:
             generator=g,
         )
 
-        if (
-            not os.path.exists(self.backbone_checkpoint(self._cur_task))
-            or not os.path.exists(self.head_checkpoint(self._cur_task))
-            or self._config["train_reset"]
-        ):
-            backbone_has_norm = self._config.get("model_use_norm", True)
-            classifier_has_norm = not backbone_has_norm
+        backbone_has_norm = self._config.get("model_use_norm", True)
+        classifier_has_norm = not backbone_has_norm
 
-            self.model.update_classifier(
-                self._total_classes - self._known_classes,
-                with_norm=classifier_has_norm,
-                with_bias=False,
-                freeze_old=True,
-                norm_layer="ln",
-            )
-            self.model.cuda()
+        self.model.update_classifier(
+            self._total_classes - self._known_classes,
+            with_norm=classifier_has_norm,
+            with_bias=False,
+            freeze_old=True,
+            norm_layer="ln",
+        )
+        self.model.cuda()
 
-            epochs = self._config["train_epochs"]
-            base_lr = self._config["train_base_lr"]
-            weight_decay = self._config["train_weight_decay"]
+        epochs = self._config["train_epochs"]
+        base_lr = self._config["train_base_lr"]
+        weight_decay = self._config["train_weight_decay"]
 
-            parameters = [
-                {
-                    "params": [p for p in self.model.backbone.parameters() if p.requires_grad],
-                    "lr": base_lr,
-                    "weight_decay": weight_decay,
-                },
-                {
-                    "params": [p for p in self.model.classifier.heads[self._cur_task].parameters() if p.requires_grad],
-                    "lr": base_lr,
-                    "weight_decay": weight_decay,
-                },
-            ]
+        parameters = [
+            {
+                "params": [p for p in self.model.backbone.parameters() if p.requires_grad],
+                "lr": base_lr,
+                "weight_decay": weight_decay,
+            },
+            {
+                "params": [p for p in self.model.classifier.heads[self._cur_task].parameters() if p.requires_grad],
+                "lr": base_lr,
+                "weight_decay": weight_decay,
+            },
+        ]
 
-            optimizer = optim.SGD(parameters, lr=base_lr, momentum=0.9, weight_decay=weight_decay)
-            scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-6)
+        optimizer = optim.SGD(parameters, lr=base_lr, momentum=0.9, weight_decay=weight_decay)
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-6)
 
-            self.model.train()
-            # Record peak trainable params for this task (backbone adapters + current head)
-            backbone_trainable = count_parameters(self.model.backbone, trainable=True)
-            head_trainable = count_parameters(self.model.classifier.heads[self._cur_task], trainable=True)
-            self._task_trainable_params.append({
-                "task": self._cur_task,
-                "backbone": backbone_trainable,
-                "head": head_trainable,
-                "total": backbone_trainable + head_trainable,
-                "model_total": count_parameters(self.model),
-            })
-            logging.info(f"[Training] Task {self._cur_task}")
-            logging.info(f"[Training] {self.model}")
+        self.model.train()
+        # Record peak trainable params for this task (backbone adapters + current head)
+        backbone_trainable = count_parameters(self.model.backbone, trainable=True)
+        head_trainable = count_parameters(self.model.classifier.heads[self._cur_task], trainable=True)
+        self._task_trainable_params.append({
+            "task": self._cur_task,
+            "backbone": backbone_trainable,
+            "head": head_trainable,
+            "total": backbone_trainable + head_trainable,
+            "model_total": count_parameters(self.model),
+        })
+        logging.info(f"[Training] Task {self._cur_task}")
+        logging.info(f"[Training] {self.model}")
 
-            for epoch in range(epochs):
-                total_loss, total_acc, total = 0, 0, 0
+        for epoch in range(epochs):
+            total_loss, total_acc, total = 0, 0, 0
 
+            _t_batch_start = time.time()
+            for _, (_, _, x, y) in enumerate(train_loader):
+                self._total_data_time += time.time() - _t_batch_start
+                x, y = x.cuda(), y.cuda()
+
+                features = self.model.get_features(x)
+
+                y_local = torch.where(y - self._known_classes >= 0, y - self._known_classes, -100)
+                logits = self.model.classifier.heads[-1](features)
+                loss = F.cross_entropy(logits, y_local, ignore_index=-100)
+
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+                total_acc += (logits.argmax(dim=1) == y_local).sum().item()
+                total += len(y_local)
+                total_loss += loss.item() * len(y_local)
                 _t_batch_start = time.time()
-                for _, (_, _, x, y) in enumerate(train_loader):
-                    self._total_data_time += time.time() - _t_batch_start
-                    x, y = x.cuda(), y.cuda()
 
-                    features = self.model.get_features(x)
+            scheduler.step()
 
-                    y_local = torch.where(y - self._known_classes >= 0, y - self._known_classes, -100)
-                    logits = self.model.classifier.heads[-1](features)
-                    loss = F.cross_entropy(logits, y_local, ignore_index=-100)
-
-                    optimizer.zero_grad()
-                    loss.backward()
-                    optimizer.step()
-
-                    total_acc += (logits.argmax(dim=1) == y_local).sum().item()
-                    total += len(y_local)
-                    total_loss += loss.item() * len(y_local)
-                    _t_batch_start = time.time()
-
-                scheduler.step()
-
-                logging.info(
-                    f"[Training] Epoch {epoch + 1}/{epochs}, "
-                    f"Total Loss: {total_loss / total:.4f}, "
-                    f"Acc: {total_acc / total:.4f}"
-                )
-
-            torch.save(self.model.get_backbone_trainable_params(), self.backbone_checkpoint(self._cur_task))
-            torch.save(self.model.classifier.heads[-1].state_dict(), self.head_checkpoint(self._cur_task))
-        else:
-            self.model.backbone.load_state_dict(
-                torch.load(self.backbone_checkpoint(self._cur_task)), strict=False
+            logging.info(
+                f"[Training] Epoch {epoch + 1}/{epochs}, "
+                f"Total Loss: {total_loss / total:.4f}, "
+                f"Acc: {total_acc / total:.4f}"
             )
-            backbone_has_norm = self._config.get("model_use_norm", True)
-            classifier_has_norm = not backbone_has_norm
 
-            self.model.update_classifier(
-                self._total_classes - self._known_classes,
-                with_norm=classifier_has_norm,
-                with_bias=False,
-                freeze_old=True,
-                norm_layer="ln",
-            )
-            self.model.classifier.heads[-1].load_state_dict(
-                torch.load(self.head_checkpoint(self._cur_task)), strict=True
-            )
-            self.model.cuda()
+        torch.save(self.model.get_backbone_trainable_params(), self.backbone_checkpoint(self._cur_task))
 
         self._train_time = time.time() - t_train_start
         self._total_train_time += self._train_time
@@ -415,7 +373,7 @@ class Learner:
     def _record_eval(self, acc, faa, ffm, asa, grouped):
         """Append grouped accuracies to mlp_matrix, update metrics, and log."""
         self.mlp_matrix.append(grouped)
-        self._mlp_faa, self._mlp_ffm, self._mlp_asa, self._aa = faa, ffm, asa, faa
+        self._mlp_faa, self._mlp_ffm, self._mlp_asa = faa, ffm, asa
         logging.info(f"[Evaluation] Task {self._cur_task}: Acc={acc:.2f}, FAA={faa:.2f}, FFM={ffm:.2f}, ASA={asa:.2f}")
         if self._total_classes == self._total_classnum:
             logging.info("[Evaluation] Accuracy matrix:")
@@ -766,14 +724,6 @@ class Learner:
     def merge(self):
         logging.info(f"[Merging] Task {self._cur_task}")
 
-        reset_merge = self._config.get("train_merge_reset", False)
-        if not reset_merge:
-            saved = self.merged_checkpoint(self._cur_task)
-            if os.path.exists(saved):
-                logging.info(f"[Merging] Load merged checkpoint for task {self._cur_task}")
-                self.load_backbone(torch.load(saved))
-                return
-
         if self._cur_task > 0:
             base_params = torch.load(self.backbone_checkpoint(-1))
             logging.info(f"[Merging] Method {self._config['model_merge']}")
@@ -826,12 +776,8 @@ class Learner:
         )
         return self._ckpt_path(filename)
 
-    def head_checkpoint(self, task):
-        filename = f"{self.prefix()}_head_{task}.pt"
-        return self._ckpt_path(filename)
-
-    def classifier_alignment_checkpoint(self):
-        filename = f"{self.prefix()}_classifier_alignment.pt"
+    def model_checkpoint(self):
+        filename = f"{self.prefix()}_model.pt"
         return self._ckpt_path(filename)
 
     def merged_checkpoint(self, task):
