@@ -836,14 +836,18 @@ def run_experiments():
     if PARAM_SWEEP:
         params = list(PARAM_SWEEP.keys())
         values = list(PARAM_SWEEP.values())
+        ablation_mode = BASE_CONFIG.get("train_ablation", False)
         experiment_configs = {}
         for base_name, base_cfg in EXPERIMENT_CONFIGS.items():
             for combo in itertools.product(*values):
-                suffix = "__".join(f"{p.split('_')[-1]}_{v}" for p, v in zip(params, combo))
+                suffix = "__".join(f"{p}_{v}" for p, v in zip(params, combo))
                 run_name = f"{base_name}__{suffix}"
                 cfg = copy.deepcopy(base_cfg)
                 for p, v in zip(params, combo):
                     cfg[p] = v
+                if ablation_mode:
+                    base_prefix = cfg.get("train_prefix", base_name)
+                    cfg["train_prefix"] = "__".join([base_prefix] + params)
                 experiment_configs[run_name] = cfg
         print(f"\nParam grid: {dict(zip(params, values))}")
         print(f"Generated {len(experiment_configs)} run(s): {list(experiment_configs.keys())}")
