@@ -618,11 +618,8 @@ class Learner:
 
         best_theta = theta.copy()
         best_loss = objective_function(best_theta)
-        best_macro_acc = 0.0
         no_improve_loss = 0
-        no_improve_acc = 0
         patience = int(self._config.get("train_ca_nes_patience", 30))
-        acc_patience = int(self._config.get("train_ca_nes_acc_plateau_patience", 5))
         iter_times = []
         t_align_start = time.time()
 
@@ -672,23 +669,12 @@ class Learner:
                     for p, w in zip(head.parameters(), snap[t]):
                         p.data = w
 
-                if macro_acc > best_macro_acc + 1e-4:
-                    best_macro_acc = macro_acc
-                    no_improve_acc = 0
-                else:
-                    no_improve_acc += 1
-
                 logging.info(
                     f"[Alignment][NES-diag] iter {it}: macro_acc={macro_acc:.4f}, "
-                    f"best_loss={best_loss:.6f}, sigma_cur={sigma_vec[head_param_slices[self._cur_task][0]]:.3e}, "
-                    f"no_improve_acc={no_improve_acc}/{acc_patience}"
+                    f"best_loss={best_loss:.6f}, sigma_cur={sigma_vec[head_param_slices[self._cur_task][0]]:.3e}"
                 )
 
-                if no_improve_acc >= acc_patience:
-                    logging.info(f"[Alignment][NES-diag] Early stop at iter {it}: macro_acc no improvement for {acc_patience} checks.")
-                    break
-
-            if no_improve_loss >= patience:
+            if patience != -1 and no_improve_loss >= patience:
                 logging.info(f"[Alignment][NES-diag] Early stop at iter {it}: loss no improvement for {patience} steps.")
                 break
 

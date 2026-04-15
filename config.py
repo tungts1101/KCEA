@@ -35,9 +35,6 @@ BASE_CONFIG = {
     "seed": [1993, 1994, 1995],
 
     # Training
-    "train_reset":        True,
-    "train_merge_reset":  True,
-
     "train_merge":        False,
     "train_ca":           False,
 
@@ -90,8 +87,7 @@ EXPERIMENT_CONFIGS = {
         "train_ca_nes_lr":                   0.01,
         "train_ca_nes_iterations":           200,
         "train_ca_nes_popsize":              100,
-        "train_ca_nes_patience":             30,     # loss early-stop patience (iterations)
-        "train_ca_nes_acc_plateau_patience": 5,      # acc early-stop: checks with no improvement
+        "train_ca_nes_patience":             30,     # loss early-stop patience (iterations); -1 = run all iterations
     },
 }
 
@@ -113,8 +109,7 @@ PARAM_SWEEP = {
     # "train_ca_nes_sigma_final":          [1e-5, 1e-4, 1e-3],
     # "train_ca_nes_sigma_min":            [1e-6, 1e-5, 1e-4],
     # "train_ca_nes_sigma_max":            [1e-3, 1e-2, 1e-1],
-    # "train_ca_nes_patience":             [10, 30, 50],
-    # "train_ca_nes_acc_plateau_patience": [3, 5, 10],
+    # "train_ca_nes_patience":             [-1, 10, 30, 50],
 
     # ── Classifier alignment ──────────────────────────────────────────────────
     # "train_ca_samples_per_class":        [128, 256, 512],
