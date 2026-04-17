@@ -67,18 +67,18 @@ EXPERIMENT_CONFIGS = {
         "model_merge_topk":        100,
         "model_merge_incremental": True,
 
-        # Classifier alignment (NES)
-        "train_ca_samples_per_class":  512,    # synthetic samples drawn per class
+        # Classifier alignment — method selection
+        "train_ca_method":             "nes",  # "nes" | "ce"
+        "train_ca_samples_per_class":  512,    # synthetic samples per class (used by NES)
 
         # Lambda — scales per-head sigma via f(λ) = 1/sqrt(λ):
         #   larger λ → smaller sigma → less exploration → less update (more constrained)
         #   smaller λ → larger sigma → more exploration → more update (freer to move)
         #   λ = 0.0   → uses lambda_eps floor → maximum sigma (fully free)
         "train_ca_lambda_old_default": 1e-2,   # old task heads: constrained (preserves past knowledge)
-        "train_ca_lambda_cur_default": 0.0,   # current task head: same constraint | set 0.0 to let it move freely
+        "train_ca_lambda_cur_default": 0.0,    # current task head: set 0.0 to let it move freely
 
         # NES optimisation
-        "train_ca_nes_objective":            "acc",  # "acc" or "ce"
         "train_ca_nes_sigma_init":           1e-3,   # initial base exploration std
         "train_ca_nes_sigma_final":          1e-4,   # final base exploration std (exponential decay)
         "train_ca_nes_sigma_min":            1e-5,   # per-task sigma lower clip
@@ -88,6 +88,11 @@ EXPERIMENT_CONFIGS = {
         "train_ca_nes_iterations":           200,
         "train_ca_nes_popsize":              100,
         "train_ca_nes_patience":             30,     # loss early-stop patience (iterations); -1 = run all iterations
+
+        # CE gradient-based alignment (train_ca_method = "ce")
+        "train_ce_samples_per_class":        512,    # synthetic samples per class per epoch
+        "train_ce_epochs":                   20,     # number of gradient steps
+        "train_ce_lr":                       1e-3,   # Adam learning rate for head parameters
     },
 }
 
@@ -101,7 +106,6 @@ EXPERIMENT_CONFIGS = {
 # Example: to sweep NES learning rate, uncomment the "train_ca_nes_lr" line.
 PARAM_SWEEP = {
     # ── NES core ──────────────────────────────────────────────────────────────
-    # "train_ca_nes_objective":            ["acc", "ce"],
     # "train_ca_nes_lr":                   [0.001, 0.01, 0.1],
     # "train_ca_nes_popsize":              [50, 100, 200],
     # "train_ca_nes_iterations":           [100, 200, 400],

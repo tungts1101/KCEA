@@ -424,7 +424,8 @@ class Learner:
         # ----------------------------
         num_sampled_pcls = self._config.get("train_ca_samples_per_class", 100)
 
-        def sample_features():
+        def sample_features(n=None):
+            k = n if n is not None else num_sampled_pcls
             sampled_data, sampled_label = [], []
             for c_id in range(self._total_classes):
                 if hasattr(self, "_class_means") and c_id < self._class_means.shape[0]:
@@ -432,12 +433,12 @@ class Learner:
                         cls_mean = self._class_means[c_id].cuda().float()
                         cls_cov = self._class_covs[c_id].cuda().float()
                         dist = MultivariateNormal(cls_mean, cls_cov)
-                        feats = dist.sample((num_sampled_pcls,))
+                        feats = dist.sample((k,))
                         if torch.isnan(feats).any():
                             raise ValueError("NaN in sampled features")
                         feats = F.layer_norm(feats, (feats.shape[-1],))
                         sampled_data.append(feats)
-                        sampled_label.extend([c_id] * num_sampled_pcls)
+                        sampled_label.extend([c_id] * k)
                     except Exception as e:
                         logging.warning(f"[Alignment] Failed to sample from class {c_id}: {e}")
                         continue
@@ -473,60 +474,9 @@ class Learner:
             return out
 
         # ----------------------------
-        # 4) Build initial genome from all heads
-        # ----------------------------
-        head_params = []
-        param_shapes = []
-        head_param_slices = {}
-        offset = 0
-
-        for task_idx in range(self._cur_task + 1):
-            head = self.model.classifier.heads[task_idx]
-            head_start = offset
-            for p in head.parameters():
-                arr = p.data.detach().cpu().numpy().flatten()
-                head_params.append(arr)
-                param_shapes.append(p.shape)
-                offset += arr.size
-            head_end = offset
-            head_param_slices[task_idx] = (head_start, head_end)
-
-        theta = np.concatenate(head_params).astype(np.float32)
-
-        # --- Reviewer diagnostics: cost, capacity, convergence info ---
-        total_model_params = count_parameters(self.model)
-        backbone_params = count_parameters(self.model.backbone)
-        K = self._config.get("train_ca_samples_per_class", 512)
-        gaussian_mem_mb = (self._class_means.numel() + self._class_covs.numel()) * 4 / 1024 ** 2
-        adapter_mem_mb = sum(
-            os.path.getsize(self.backbone_checkpoint(t)) / 1024 ** 2
-            for t in range(self._cur_task + 1)
-            if os.path.exists(self.backbone_checkpoint(t))
-        )
-        logging.info("[Alignment] === NES Alignment Cost Report ===")
-        logging.info(f"[Alignment]   Task: {self._cur_task} | Classes seen: {self._total_classes}")
-        logging.info(f"[Alignment]   Synthetic samples: K={K}/class × {self._total_classes} classes = {all_features.shape[0]:,} total")
-        logging.info(f"[Alignment]   Head params (theta): {theta.size:,} / model total {total_model_params:,} ({theta.size * 100 / total_model_params:.3f}%)")
-        logging.info(f"[Alignment]   Backbone params: {backbone_params:,}")
-        logging.info(f"[Alignment]   Gaussian statistics memory: {gaussian_mem_mb:.2f} MB ({self._total_classes} classes × {self.model.feature_dim}-dim)")
-        logging.info(f"[Alignment]   Stored adapter checkpoints: {adapter_mem_mb:.2f} MB ({self._cur_task + 1} tasks)")
-
-        # ----------------------------
-        # 5) Per-head trust region strengths
-        # ----------------------------
-        lambda_cfg = self._config.get("train_ca_lambda_head", {})
-        default_old = float(self._config.get("train_ca_lambda_old_default", 1e-4))
-        default_cur = float(self._config.get("train_ca_lambda_cur_default", 1e-5))
-
-        lambda_task = {}
-        for t in range(self._cur_task + 1):
-            lam = lambda_cfg.get(str(t), lambda_cfg.get(t, default_cur if t == self._cur_task else default_old))
-            lambda_task[t] = float(lam)
-
-        # ----------------------------
-        # 6) Macro-class accuracy helper (vectorized via scatter_add)
-        #    Synthetic data is balanced (K samples/class), so this is equivalent
-        #    to micro accuracy — but macro is kept for correctness under real imbalance.
+        # 4) Macro-class accuracy helper (vectorized via scatter_add)
+        #    Balanced synthetic data → equivalent to micro accuracy, but macro is
+        #    kept for correctness under real imbalance.
         # ----------------------------
         @torch.no_grad()
         def macro_class_accuracy(logits, labels):
@@ -541,183 +491,256 @@ class Learner:
             return float(np.mean(per_class)) if per_class else 0.0, per_class
 
         # ----------------------------
-        # 7) Objective (scalar loss to minimize)
+        # 5) Route to alignment method
         # ----------------------------
-        nes_objective = self._config.get("train_ca_nes_objective", "acc")  # "acc" or "ce"
-
-        def objective_function(params_flat: np.ndarray) -> float:
-            try:
-                # Fresh sample every evaluation to prevent exploiting fixed features
-                features, labels = sample_features()
-                if features is None:
-                    return 1.0
-
-                param_idx = 0
-                original_params_snap = {}
-                for task_idx in range(self._cur_task + 1):
-                    head = self.model.classifier.heads[task_idx]
-                    original_params_snap[task_idx] = []
-                    for _, p in head.named_parameters():
-                        original_params_snap[task_idx].append(p.data.clone())
-                        sz = p.numel()
-                        new_data = params_flat[param_idx:param_idx + sz]
-                        param_idx += sz
-                        p.data = torch.from_numpy(new_data).float().cuda().view(p.shape)
-
-                with torch.no_grad():
-                    logits = stitched_logits_from_heads(features)
-                    # NES maximises fitness; loss = -fitness
-                    if nes_objective == "ce":
-                        fitness = -F.cross_entropy(logits, labels).item()
-                    else:  # "acc"
-                        macro_acc, _ = macro_class_accuracy(logits, labels)
-                        fitness = macro_acc
-
-                loss = -fitness
-
-                for task_idx in range(self._cur_task + 1):
-                    head = self.model.classifier.heads[task_idx]
-                    for p, w in zip(head.parameters(), original_params_snap[task_idx]):
-                        p.data = w
-
-                return float(loss)
-
-            except Exception as e:
-                logging.warning(f"[Alignment] Error in objective function: {e}")
-                return 1.0
-
-        # ----------------------------
-        # 8) Per-task sigma scheduling
-        #    sigma_base decays exponentially; per-task sigma scales by f(lambda_k) = 1/sqrt(lambda_k)
-        #    so tightly constrained (high lambda) tasks get less noise, free tasks get more.
-        # ----------------------------
-        base_sigma_init = float(self._config.get("train_ca_nes_sigma_init", 1e-3))
-        base_sigma_final = float(self._config.get("train_ca_nes_sigma_final", 1e-4))
-        sigma_min = float(self._config.get("train_ca_nes_sigma_min", 1e-5))
-        sigma_max = float(self._config.get("train_ca_nes_sigma_max", 1e-2))
-        lambda_eps = float(self._config.get("train_ca_nes_lambda_eps", 1e-8))
-
-        def importance(lam):
-            """f(lambda) = 1 / sqrt(max(lambda, eps)) — maps trust-region strength to sigma scale."""
-            return 1.0 / np.sqrt(max(float(lam), lambda_eps))
-
-        def get_sigma_vec(iteration, total_iters):
-            # Exponential decay: sigma_init * (sigma_final/sigma_init)^(it / max(T-1, 1))
-            sigma_base = base_sigma_init * (base_sigma_final / base_sigma_init) ** (
-                iteration / max(total_iters - 1, 1)
-            )
-            sigma = np.empty_like(theta)
-            for k in range(self._cur_task + 1):
-                s, e = head_param_slices[k]
-                sigma[s:e] = np.clip(sigma_base * importance(lambda_task[k]), sigma_min, sigma_max)
-            return sigma.astype(np.float32)
-
-        # ----------------------------
-        # 9) NES loop
-        # ----------------------------
-        lr = float(self._config.get("train_ca_nes_lr", 0.05))
-        iters = int(self._config.get("train_ca_nes_iterations", 50))
-        pop = int(self._config.get("train_ca_nes_popsize", 30))
-
-        logging.info(f"[Alignment][NES] T={iters}, P={pop}, K={K}, lr={lr}, objective={nes_objective}")
-        logging.info(f"[Alignment][NES] sigma schedule: init={base_sigma_init:.3e}, final={base_sigma_final:.3e}, clip=[{sigma_min:.1e},{sigma_max:.1e}]")
-        logging.info(f"[Alignment][NES] per-task sigma scale f(λ): " + ", ".join(
-            f"T{k}={importance(lambda_task[k]):.3f}(λ={lambda_task[k]:.1e})" for k in range(self._cur_task + 1)
-        ))
-        logging.info(f"[Alignment][NES] Forward passes per iteration: 2P+1={2*pop+1} | Max total: {(2*pop+1)*iters:,}")
-
-        best_theta = theta.copy()
-        best_loss = objective_function(best_theta)
-        no_improve_loss = 0
-        patience = int(self._config.get("train_ca_nes_patience", 30))
-        iter_times = []
+        ca_method = self._config.get("train_ca_method", "nes")
         t_align_start = time.time()
 
-        for it in range(iters):
-            t_iter_start = time.time()
-            sigma_vec = get_sigma_vec(it, iters)
+        if ca_method == "nes":
+            # ── Build genome ──────────────────────────────────────────────────
+            head_params = []
+            param_shapes = []
+            head_param_slices = {}
+            offset = 0
 
-            eps = np.random.randn(pop, theta.size).astype(np.float32)
+            for task_idx in range(self._cur_task + 1):
+                head = self.model.classifier.heads[task_idx]
+                head_start = offset
+                for p in head.parameters():
+                    arr = p.data.detach().cpu().numpy().flatten()
+                    head_params.append(arr)
+                    param_shapes.append(p.shape)
+                    offset += arr.size
+                head_end = offset
+                head_param_slices[task_idx] = (head_start, head_end)
 
-            losses_pos = np.empty(pop, dtype=np.float32)
-            losses_neg = np.empty(pop, dtype=np.float32)
-            for i in range(pop):
-                step = sigma_vec * eps[i]
-                losses_pos[i] = objective_function(theta + step)
-                losses_neg[i] = objective_function(theta - step)
+            theta = np.concatenate(head_params).astype(np.float32)
 
-            iter_times.append(time.time() - t_iter_start)
+            # ── Diagnostics ───────────────────────────────────────────────────
+            total_model_params = count_parameters(self.model)
+            backbone_params = count_parameters(self.model.backbone)
+            K = self._config.get("train_ca_samples_per_class", 512)
+            gaussian_mem_mb = (self._class_means.numel() + self._class_covs.numel()) * 4 / 1024 ** 2
+            adapter_mem_mb = sum(
+                os.path.getsize(self.backbone_checkpoint(t)) / 1024 ** 2
+                for t in range(self._cur_task + 1)
+                if os.path.exists(self.backbone_checkpoint(t))
+            )
+            logging.info("[Alignment][NES] === Alignment Cost Report ===")
+            logging.info(f"[Alignment][NES]   Task: {self._cur_task} | Classes seen: {self._total_classes}")
+            logging.info(f"[Alignment][NES]   Synthetic samples: K={K}/class × {self._total_classes} classes = {K * self._total_classes:,} total")
+            logging.info(f"[Alignment][NES]   Head params (theta): {theta.size:,} / model total {total_model_params:,} ({theta.size * 100 / total_model_params:.3f}%)")
+            logging.info(f"[Alignment][NES]   Backbone params: {backbone_params:,}")
+            logging.info(f"[Alignment][NES]   Gaussian statistics memory: {gaussian_mem_mb:.2f} MB ({self._total_classes} classes × {self.model.feature_dim}-dim)")
+            logging.info(f"[Alignment][NES]   Stored adapter checkpoints: {adapter_mem_mb:.2f} MB ({self._cur_task + 1} tasks)")
 
-            deltaL = (losses_pos - losses_neg)[:, None]
-            grad = (deltaL * (eps / np.maximum(sigma_vec, 1e-12))).mean(axis=0) / 2.0
-            theta = theta - lr * grad.astype(np.float32)
+            # ── Per-head trust region strengths ───────────────────────────────
+            lambda_cfg = self._config.get("train_ca_lambda_head", {})
+            default_old = float(self._config.get("train_ca_lambda_old_default", 1e-4))
+            default_cur = float(self._config.get("train_ca_lambda_cur_default", 1e-5))
 
-            cur_loss = objective_function(theta)
-            if cur_loss < best_loss - 1e-6:
-                best_loss = cur_loss
-                best_theta = theta.copy()
-                no_improve_loss = 0
-            else:
-                no_improve_loss += 1
+            lambda_task = {}
+            for t in range(self._cur_task + 1):
+                lam = lambda_cfg.get(str(t), lambda_cfg.get(t, default_cur if t == self._cur_task else default_old))
+                lambda_task[t] = float(lam)
 
-            if it % 10 == 0 or it == iters - 1:
-                param_idx = 0
-                snap = {}
-                for t in range(self._cur_task + 1):
-                    head = self.model.classifier.heads[t]
-                    snap[t] = [p.data.clone() for p in head.parameters()]
-                    for p in head.parameters():
-                        sz = p.numel()
-                        new_data = best_theta[param_idx:param_idx + sz]
-                        param_idx += sz
-                        p.data = torch.from_numpy(new_data).float().cuda().view(p.shape)
-                log_features, log_labels = sample_features()
-                with torch.no_grad():
-                    logits = stitched_logits_from_heads(log_features)
-                    macro_acc, _ = macro_class_accuracy(logits, log_labels)
-                for t in range(self._cur_task + 1):
-                    head = self.model.classifier.heads[t]
-                    for p, w in zip(head.parameters(), snap[t]):
-                        p.data = w
+            # ── Objective: macro accuracy (NES maximises fitness; loss = -acc) ─
+            def objective_function(params_flat: np.ndarray) -> float:
+                try:
+                    features, labels = sample_features()
+                    if features is None:
+                        return 1.0
 
-                logging.info(
-                    f"[Alignment][NES-diag] iter {it}: macro_acc={macro_acc:.4f}, "
-                    f"best_loss={best_loss:.6f}, sigma_cur={sigma_vec[head_param_slices[self._cur_task][0]]:.3e}"
+                    param_idx = 0
+                    original_params_snap = {}
+                    for task_idx in range(self._cur_task + 1):
+                        head = self.model.classifier.heads[task_idx]
+                        original_params_snap[task_idx] = []
+                        for _, p in head.named_parameters():
+                            original_params_snap[task_idx].append(p.data.clone())
+                            sz = p.numel()
+                            new_data = params_flat[param_idx:param_idx + sz]
+                            param_idx += sz
+                            p.data = torch.from_numpy(new_data).float().cuda().view(p.shape)
+
+                    with torch.no_grad():
+                        logits = stitched_logits_from_heads(features)
+                        macro_acc, _ = macro_class_accuracy(logits, labels)
+
+                    loss = -macro_acc
+
+                    for task_idx in range(self._cur_task + 1):
+                        head = self.model.classifier.heads[task_idx]
+                        for p, w in zip(head.parameters(), original_params_snap[task_idx]):
+                            p.data = w
+
+                    return float(loss)
+
+                except Exception as e:
+                    logging.warning(f"[Alignment][NES] Error in objective function: {e}")
+                    return 1.0
+
+            # ── Sigma scheduling ──────────────────────────────────────────────
+            base_sigma_init = float(self._config.get("train_ca_nes_sigma_init", 1e-3))
+            base_sigma_final = float(self._config.get("train_ca_nes_sigma_final", 1e-4))
+            sigma_min = float(self._config.get("train_ca_nes_sigma_min", 1e-5))
+            sigma_max = float(self._config.get("train_ca_nes_sigma_max", 1e-2))
+            lambda_eps = float(self._config.get("train_ca_nes_lambda_eps", 1e-8))
+
+            def importance(lam):
+                return 1.0 / np.sqrt(max(float(lam), lambda_eps))
+
+            def get_sigma_vec(iteration, total_iters):
+                sigma_base = base_sigma_init * (base_sigma_final / base_sigma_init) ** (
+                    iteration / max(total_iters - 1, 1)
                 )
+                sigma = np.empty_like(theta)
+                for k in range(self._cur_task + 1):
+                    s, e = head_param_slices[k]
+                    sigma[s:e] = np.clip(sigma_base * importance(lambda_task[k]), sigma_min, sigma_max)
+                return sigma.astype(np.float32)
 
-            if patience != -1 and no_improve_loss >= patience:
-                logging.info(f"[Alignment][NES-diag] Early stop at iter {it}: loss no improvement for {patience} steps.")
-                break
+            # ── NES loop ──────────────────────────────────────────────────────
+            lr = float(self._config.get("train_ca_nes_lr", 0.05))
+            iters = int(self._config.get("train_ca_nes_iterations", 50))
+            pop = int(self._config.get("train_ca_nes_popsize", 30))
 
-        # ----------------------------
-        # 10) Apply best solution
-        # ----------------------------
-        param_idx = 0
-        for t in range(self._cur_task + 1):
-            head = self.model.classifier.heads[t]
-            for p in head.parameters():
-                sz = p.numel()
-                new_data = best_theta[param_idx:param_idx + sz]
-                param_idx += sz
-                p.data = torch.from_numpy(new_data).float().cuda().view(p.shape)
+            logging.info(f"[Alignment][NES] T={iters}, P={pop}, K={K}, lr={lr}")
+            logging.info(f"[Alignment][NES] sigma schedule: init={base_sigma_init:.3e}, final={base_sigma_final:.3e}, clip=[{sigma_min:.1e},{sigma_max:.1e}]")
+            logging.info(f"[Alignment][NES] per-task sigma scale f(λ): " + ", ".join(
+                f"T{k}={importance(lambda_task[k]):.3f}(λ={lambda_task[k]:.1e})" for k in range(self._cur_task + 1)
+            ))
+            logging.info(f"[Alignment][NES] Forward passes per iteration: 2P+1={2*pop+1} | Max total: {(2*pop+1)*iters:,}")
 
-        final_features, final_labels = sample_features()
-        with torch.no_grad():
-            logits = stitched_logits_from_heads(final_features)
-            final_macro, _ = macro_class_accuracy(logits, final_labels)
+            best_theta = theta.copy()
+            best_loss = objective_function(best_theta)
+            no_improve_loss = 0
+            patience = int(self._config.get("train_ca_nes_patience", 30))
+            iter_times = []
 
-        t_align_total = time.time() - t_align_start
-        self._total_align_time += t_align_total
-        actual_iters = len(iter_times)
+            for it in range(iters):
+                t_iter_start = time.time()
+                sigma_vec = get_sigma_vec(it, iters)
 
-        logging.info("[Alignment][NES] === Convergence & Cost Summary ===")
-        logging.info(f"[Alignment][NES]   Iterations run: {actual_iters} / {iters}")
-        logging.info(f"[Alignment][NES]   Synthetic macro-acc: {-best_loss:.4f} → {final_macro:.4f}")
-        logging.info(f"[Alignment][NES]   Wall-clock: total={t_align_total:.1f}s, mean/iter={np.mean(iter_times):.2f}s")
-        if hasattr(self, "_train_time") and self._train_time > 0:
-            logging.info(f"[Alignment][NES]   Alignment overhead: {t_align_total:.1f}s / train {self._train_time:.1f}s = {t_align_total / self._train_time:.2f}x")
-        if self._total_classes == self._total_classnum:
-            logging.info(f"[Alignment][NES]   TOTAL across all tasks — alignment: {self._total_align_time:.1f}s, training: {self._total_train_time:.1f}s, ratio: {self._total_align_time / max(self._total_train_time, 1):.2f}x")
+                eps = np.random.randn(pop, theta.size).astype(np.float32)
+
+                losses_pos = np.empty(pop, dtype=np.float32)
+                losses_neg = np.empty(pop, dtype=np.float32)
+                for i in range(pop):
+                    step = sigma_vec * eps[i]
+                    losses_pos[i] = objective_function(theta + step)
+                    losses_neg[i] = objective_function(theta - step)
+
+                iter_times.append(time.time() - t_iter_start)
+
+                deltaL = (losses_pos - losses_neg)[:, None]
+                grad = (deltaL * (eps / np.maximum(sigma_vec, 1e-12))).mean(axis=0) / 2.0
+                theta = theta - lr * grad.astype(np.float32)
+
+                cur_loss = objective_function(theta)
+                if cur_loss < best_loss - 1e-6:
+                    best_loss = cur_loss
+                    best_theta = theta.copy()
+                    no_improve_loss = 0
+                else:
+                    no_improve_loss += 1
+
+                if it % 10 == 0 or it == iters - 1:
+                    param_idx = 0
+                    snap = {}
+                    for t in range(self._cur_task + 1):
+                        head = self.model.classifier.heads[t]
+                        snap[t] = [p.data.clone() for p in head.parameters()]
+                        for p in head.parameters():
+                            sz = p.numel()
+                            new_data = best_theta[param_idx:param_idx + sz]
+                            param_idx += sz
+                            p.data = torch.from_numpy(new_data).float().cuda().view(p.shape)
+                    log_features, log_labels = sample_features()
+                    with torch.no_grad():
+                        logits = stitched_logits_from_heads(log_features)
+                        macro_acc, _ = macro_class_accuracy(logits, log_labels)
+                    for t in range(self._cur_task + 1):
+                        head = self.model.classifier.heads[t]
+                        for p, w in zip(head.parameters(), snap[t]):
+                            p.data = w
+                    logging.info(
+                        f"[Alignment][NES-diag] iter {it}: macro_acc={macro_acc:.4f}, "
+                        f"best_loss={best_loss:.6f}, sigma_cur={sigma_vec[head_param_slices[self._cur_task][0]]:.3e}"
+                    )
+
+                if patience != -1 and no_improve_loss >= patience:
+                    logging.info(f"[Alignment][NES-diag] Early stop at iter {it}: loss no improvement for {patience} steps.")
+                    break
+
+            # ── Apply best solution ───────────────────────────────────────────
+            param_idx = 0
+            for t in range(self._cur_task + 1):
+                head = self.model.classifier.heads[t]
+                for p in head.parameters():
+                    sz = p.numel()
+                    new_data = best_theta[param_idx:param_idx + sz]
+                    param_idx += sz
+                    p.data = torch.from_numpy(new_data).float().cuda().view(p.shape)
+
+            final_features, final_labels = sample_features()
+            with torch.no_grad():
+                logits = stitched_logits_from_heads(final_features)
+                final_macro, _ = macro_class_accuracy(logits, final_labels)
+
+            t_align_total = time.time() - t_align_start
+            self._total_align_time += t_align_total
+            actual_iters = len(iter_times)
+
+            logging.info("[Alignment][NES] === Convergence & Cost Summary ===")
+            logging.info(f"[Alignment][NES]   Iterations run: {actual_iters} / {iters}")
+            logging.info(f"[Alignment][NES]   Synthetic macro-acc: {-best_loss:.4f} → {final_macro:.4f}")
+            logging.info(f"[Alignment][NES]   Wall-clock: total={t_align_total:.1f}s, mean/iter={np.mean(iter_times):.2f}s")
+            if hasattr(self, "_train_time") and self._train_time > 0:
+                logging.info(f"[Alignment][NES]   Alignment overhead: {t_align_total:.1f}s / train {self._train_time:.1f}s = {t_align_total / self._train_time:.2f}x")
+            if self._total_classes == self._total_classnum:
+                logging.info(f"[Alignment][NES]   TOTAL across all tasks — alignment: {self._total_align_time:.1f}s, training: {self._total_train_time:.1f}s, ratio: {self._total_align_time / max(self._total_train_time, 1):.2f}x")
+
+        elif ca_method == "ce":
+            # ── CE gradient-based alignment ───────────────────────────────────
+            ce_samples_pcls = int(self._config.get("train_ce_samples_per_class", num_sampled_pcls))
+            ce_epochs = int(self._config.get("train_ce_epochs", 20))
+            ce_lr = float(self._config.get("train_ce_lr", 1e-3))
+
+            all_head_params = []
+            for t in range(self._cur_task + 1):
+                for p in self.model.classifier.heads[t].parameters():
+                    p.requires_grad_(True)
+                    all_head_params.append(p)
+
+            optimizer = torch.optim.Adam(all_head_params, lr=ce_lr)
+
+            logging.info(f"[Alignment][CE] epochs={ce_epochs}, lr={ce_lr}, samples/class={ce_samples_pcls}")
+
+            for epoch in range(ce_epochs):
+                features, labels = sample_features(n=ce_samples_pcls)
+                if features is None:
+                    break
+                optimizer.zero_grad()
+                logits = torch.cat(
+                    [self.model.classifier.heads[t](features) for t in range(self._cur_task + 1)], dim=1
+                )
+                loss = F.cross_entropy(logits, labels)
+                loss.backward()
+                optimizer.step()
+
+                if (epoch + 1) % 5 == 0 or epoch == ce_epochs - 1:
+                    acc = (logits.detach().argmax(1) == labels).float().mean().item()
+                    logging.info(
+                        f"[Alignment][CE] epoch {epoch + 1}/{ce_epochs}: "
+                        f"loss={loss.item():.4f}, train_acc={acc:.4f}"
+                    )
+
+            t_align_total = time.time() - t_align_start
+            self._total_align_time += t_align_total
+            logging.info(f"[Alignment][CE] Done | Wall-clock: {t_align_total:.1f}s")
+            if self._total_classes == self._total_classnum:
+                logging.info(f"[Alignment][CE] TOTAL — alignment: {self._total_align_time:.1f}s, training: {self._total_train_time:.1f}s, ratio: {self._total_align_time / max(self._total_train_time, 1):.2f}x")
 
     def merge(self):
         logging.info(f"[Merging] Task {self._cur_task}")
