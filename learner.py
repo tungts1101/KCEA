@@ -367,6 +367,17 @@ class Learner:
             class_mean = torch.mean(features_list, dim=0)
             self._class_means[cls_idx] = class_mean
 
+            # var(unbiased=True) returns NaN with <2 samples; clamp does not fix NaN
+            if len(features_list) < 2:
+                logging.warning(f"[Alignment] Class {cls_idx}: only {len(features_list)} sample(s), using identity fallback")
+                if sample_method == "diagonal":
+                    self._class_covs[cls_idx] = torch.full((feature_dim,), 1e-4)
+                elif sample_method == "variance":
+                    self._class_covs[cls_idx] = torch.tensor(1e-4)
+                else:
+                    self._class_covs[cls_idx] = torch.eye(feature_dim) * 1e-4
+                continue
+
             if sample_method == "diagonal":
                 class_var = features_list.var(dim=0, unbiased=True).clamp(min=1e-6)
                 self._class_covs[cls_idx] = class_var
@@ -383,7 +394,7 @@ class Learner:
                 try:
                     torch.linalg.cholesky(class_cov)
                 except RuntimeError:
-                    class_var = features_list.var(dim=0, unbiased=True)
+                    class_var = features_list.var(dim=0, unbiased=True).clamp(min=1e-6)
                     class_cov = torch.diag(class_var + 1e-3)
                 self._class_covs[cls_idx] = class_cov
 
