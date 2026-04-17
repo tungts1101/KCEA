@@ -458,9 +458,9 @@ class Learner:
                             std = torch.sqrt(self._class_covs[c_id].cuda().float())
                             feats = torch.normal(cls_mean.unsqueeze(0).expand(k, -1), std.unsqueeze(0).expand(k, -1))
                         elif sample_method == "variance":
-                            scalar_std = torch.sqrt(self._class_covs[c_id].cuda().float())
+                            scalar_std = torch.sqrt(self._class_covs[c_id].cuda().float()).item()
                             feats = torch.normal(cls_mean.unsqueeze(0).expand(k, -1),
-                                                 scalar_std.expand(k, cls_mean.shape[0]))
+                                                 torch.full((k, cls_mean.shape[0]), scalar_std, device=cls_mean.device))
                         else:  # "covariance"
                             cls_cov = self._class_covs[c_id].cuda().float()
                             dist = MultivariateNormal(cls_mean, cls_cov)
