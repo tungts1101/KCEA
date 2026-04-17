@@ -316,19 +316,33 @@ class Learner:
 
     def compute_multivariate_normal(self):
         _t_gauss = time.time()
+        sample_method = self._config.get("train_ca_sample_method", "covariance")
         logging.info(
-            f"[Alignment] Compute class mean and cov for classes {self._known_classes} - {self._total_classes - 1}"
+            f"[Alignment] Compute class statistics ({sample_method}) for classes "
+            f"{self._known_classes} - {self._total_classes - 1}"
         )
         total_class = self._total_classes
         feature_dim = self.model.feature_dim
+
+        # Shape of _class_covs depends on what we need to store:
+        #   "covariance" → [C, D, D]  full matrix
+        #   "diagonal"   → [C, D]     per-dim variances
+        #   "variance"   → [C]        single scalar variance per class
+        if sample_method == "diagonal":
+            cov_shape = (total_class, feature_dim)
+        elif sample_method == "variance":
+            cov_shape = (total_class,)
+        else:  # "covariance"
+            cov_shape = (total_class, feature_dim, feature_dim)
+
         if not hasattr(self, "_class_means") or not hasattr(self, "_class_covs"):
             self._class_means = torch.zeros((total_class, feature_dim))
-            self._class_covs = torch.zeros((total_class, feature_dim, feature_dim))
+            self._class_covs = torch.zeros(cov_shape)
         else:
             new_class_means = torch.zeros((total_class, feature_dim))
             new_class_means[: self._known_classes] = self._class_means
             self._class_means = new_class_means
-            new_class_covs = torch.zeros((total_class, feature_dim, feature_dim))
+            new_class_covs = torch.zeros(cov_shape)
             new_class_covs[: self._known_classes] = self._class_covs
             self._class_covs = new_class_covs
 
@@ -351,22 +365,27 @@ class Learner:
 
             features_list = torch.cat(features_list, dim=0)
             class_mean = torch.mean(features_list, dim=0)
-            class_cov = torch.cov(features_list.T)
+            self._class_means[cls_idx] = class_mean
 
-            # Ensure positive definiteness
-            min_eigenval = torch.linalg.eigvals(class_cov).real.min()
-            reg_term = (abs(min_eigenval.item()) + 1e-3) if min_eigenval <= 0 else 1e-4
-            class_cov = class_cov + torch.eye(feature_dim) * reg_term
-
-            # Verify with Cholesky; fall back to diagonal if still not PD
-            try:
-                torch.linalg.cholesky(class_cov)
-            except RuntimeError:
-                class_var = features_list.var(dim=0, unbiased=True)
-                class_cov = torch.diag(class_var + 1e-3)
-
-            self._class_means[cls_idx, :] = class_mean
-            self._class_covs[cls_idx, ...] = class_cov
+            if sample_method == "diagonal":
+                class_var = features_list.var(dim=0, unbiased=True).clamp(min=1e-6)
+                self._class_covs[cls_idx] = class_var
+            elif sample_method == "variance":
+                scalar_var = features_list.var(dim=0, unbiased=True).mean().clamp(min=1e-6)
+                self._class_covs[cls_idx] = scalar_var
+            else:  # "covariance"
+                class_cov = torch.cov(features_list.T)
+                # Ensure positive definiteness
+                min_eigenval = torch.linalg.eigvals(class_cov).real.min()
+                reg_term = (abs(min_eigenval.item()) + 1e-3) if min_eigenval <= 0 else 1e-4
+                class_cov = class_cov + torch.eye(feature_dim) * reg_term
+                # Verify with Cholesky; fall back to diagonal if still not PD
+                try:
+                    torch.linalg.cholesky(class_cov)
+                except RuntimeError:
+                    class_var = features_list.var(dim=0, unbiased=True)
+                    class_cov = torch.diag(class_var + 1e-3)
+                self._class_covs[cls_idx] = class_cov
 
         self._total_gauss_time += time.time() - _t_gauss
 
@@ -423,6 +442,10 @@ class Learner:
         # 1) Synthetic sampler — fresh draw each call to avoid fixed-feature exploitation
         # ----------------------------
         num_sampled_pcls = self._config.get("train_ca_samples_per_class", 100)
+        # "covariance" — MultivariateNormal with full stored [D,D] covariance (correlated dims)
+        # "diagonal"   — independent Normal per dim using stored [D] variances
+        # "variance"   — isotropic Normal using stored scalar variance per class
+        sample_method = self._config.get("train_ca_sample_method", "covariance")
 
         def sample_features(n=None):
             k = n if n is not None else num_sampled_pcls
@@ -431,9 +454,17 @@ class Learner:
                 if hasattr(self, "_class_means") and c_id < self._class_means.shape[0]:
                     try:
                         cls_mean = self._class_means[c_id].cuda().float()
-                        cls_cov = self._class_covs[c_id].cuda().float()
-                        dist = MultivariateNormal(cls_mean, cls_cov)
-                        feats = dist.sample((k,))
+                        if sample_method == "diagonal":
+                            std = torch.sqrt(self._class_covs[c_id].cuda().float())
+                            feats = torch.normal(cls_mean.unsqueeze(0).expand(k, -1), std.unsqueeze(0).expand(k, -1))
+                        elif sample_method == "variance":
+                            scalar_std = torch.sqrt(self._class_covs[c_id].cuda().float())
+                            feats = torch.normal(cls_mean.unsqueeze(0).expand(k, -1),
+                                                 scalar_std.expand(k, cls_mean.shape[0]))
+                        else:  # "covariance"
+                            cls_cov = self._class_covs[c_id].cuda().float()
+                            dist = MultivariateNormal(cls_mean, cls_cov)
+                            feats = dist.sample((k,))
                         if torch.isnan(feats).any():
                             raise ValueError("NaN in sampled features")
                         feats = F.layer_norm(feats, (feats.shape[-1],))

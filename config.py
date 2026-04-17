@@ -70,6 +70,7 @@ EXPERIMENT_CONFIGS = {
         # Classifier alignment — method selection
         "train_ca_method":             "nes",  # "nes" | "ce"
         "train_ca_samples_per_class":  512,    # synthetic samples per class (used by NES)
+        "train_ca_sample_method":      "covariance", # sampling distribution: "covariance" | "diagonal" | "variance"
 
         # Lambda — scales per-head sigma via f(λ) = 1/sqrt(λ):
         #   larger λ → smaller sigma → less exploration → less update (more constrained)
@@ -116,6 +117,7 @@ PARAM_SWEEP = {
     # "train_ca_nes_patience":             [-1, 10, 30, 50],
 
     # ── Classifier alignment ──────────────────────────────────────────────────
+    # "train_ca_sample_method":            ["covariance", "diagonal", "variance"],
     # "train_ca_samples_per_class":        [128, 256, 512],
     # "train_ca_lambda_old_default":       [0.0, 1e-4, 1e-2],
     # "train_ca_lambda_cur_default":       [0.0, 1e-4, 1e-2],
