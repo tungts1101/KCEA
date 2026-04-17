@@ -420,34 +420,39 @@ class Learner:
             return  # No alignment needed for first task
 
         # ----------------------------
-        # 1) Generate a balanced synthetic set (equal per class)
+        # 1) Synthetic sampler — fresh draw each call to avoid fixed-feature exploitation
         # ----------------------------
-        sampled_data, sampled_label = [], []
         num_sampled_pcls = self._config.get("train_ca_samples_per_class", 100)
 
-        for c_id in range(self._total_classes):
-            if hasattr(self, "_class_means") and c_id < self._class_means.shape[0]:
-                try:
-                    cls_mean = self._class_means[c_id].cuda().float()
-                    cls_cov = self._class_covs[c_id].cuda().float()
-                    dist = MultivariateNormal(cls_mean, cls_cov)
-                    feats = dist.sample((num_sampled_pcls,))
-                    if torch.isnan(feats).any():
-                        raise ValueError("NaN in sampled features")
-                    feats = F.layer_norm(feats, (feats.shape[-1],))
-                    sampled_data.append(feats)
-                    sampled_label.extend([c_id] * num_sampled_pcls)
-                except Exception as e:
-                    logging.warning(f"[Alignment] Failed to sample from class {c_id}: {e}")
-                    continue
+        def sample_features():
+            sampled_data, sampled_label = [], []
+            for c_id in range(self._total_classes):
+                if hasattr(self, "_class_means") and c_id < self._class_means.shape[0]:
+                    try:
+                        cls_mean = self._class_means[c_id].cuda().float()
+                        cls_cov = self._class_covs[c_id].cuda().float()
+                        dist = MultivariateNormal(cls_mean, cls_cov)
+                        feats = dist.sample((num_sampled_pcls,))
+                        if torch.isnan(feats).any():
+                            raise ValueError("NaN in sampled features")
+                        feats = F.layer_norm(feats, (feats.shape[-1],))
+                        sampled_data.append(feats)
+                        sampled_label.extend([c_id] * num_sampled_pcls)
+                    except Exception as e:
+                        logging.warning(f"[Alignment] Failed to sample from class {c_id}: {e}")
+                        continue
+            if not sampled_data:
+                return None, None
+            features = torch.cat(sampled_data, dim=0).float().cuda(non_blocking=True)
+            labels = torch.tensor(sampled_label).long().cuda(non_blocking=True)
+            return features, labels
 
-        if not sampled_data:
+        # Validate that sampling works before entering the NES loop
+        _check_feats, _ = sample_features()
+        if _check_feats is None:
             logging.warning("No samples generated, skipping classifier alignment")
             return
-
-        all_features = torch.cat(sampled_data, dim=0).float().cuda(non_blocking=True)
-        all_labels = torch.tensor(sampled_label).long().cuda(non_blocking=True)
-        logging.info(f"[Alignment] Generated synthetic dataset: {all_features.shape[0]} samples, {self._total_classes} classes")
+        logging.info(f"[Alignment] Stochastic synthetic sampler ready: {_check_feats.shape[0]} samples/draw, {self._total_classes} classes")
 
         # ----------------------------
         # 2) Head → class range mapping and stitched logits
@@ -542,6 +547,11 @@ class Learner:
 
         def objective_function(params_flat: np.ndarray) -> float:
             try:
+                # Fresh sample every evaluation to prevent exploiting fixed features
+                features, labels = sample_features()
+                if features is None:
+                    return 1.0
+
                 param_idx = 0
                 original_params_snap = {}
                 for task_idx in range(self._cur_task + 1):
@@ -555,12 +565,12 @@ class Learner:
                         p.data = torch.from_numpy(new_data).float().cuda().view(p.shape)
 
                 with torch.no_grad():
-                    logits = stitched_logits_from_heads(all_features)
+                    logits = stitched_logits_from_heads(features)
                     # NES maximises fitness; loss = -fitness
                     if nes_objective == "ce":
-                        fitness = -F.cross_entropy(logits, all_labels).item()
+                        fitness = -F.cross_entropy(logits, labels).item()
                     else:  # "acc"
-                        macro_acc, _ = macro_class_accuracy(logits, all_labels)
+                        macro_acc, _ = macro_class_accuracy(logits, labels)
                         fitness = macro_acc
 
                 loss = -fitness
@@ -661,9 +671,10 @@ class Learner:
                         new_data = best_theta[param_idx:param_idx + sz]
                         param_idx += sz
                         p.data = torch.from_numpy(new_data).float().cuda().view(p.shape)
+                log_features, log_labels = sample_features()
                 with torch.no_grad():
-                    logits = stitched_logits_from_heads(all_features)
-                    macro_acc, _ = macro_class_accuracy(logits, all_labels)
+                    logits = stitched_logits_from_heads(log_features)
+                    macro_acc, _ = macro_class_accuracy(logits, log_labels)
                 for t in range(self._cur_task + 1):
                     head = self.model.classifier.heads[t]
                     for p, w in zip(head.parameters(), snap[t]):
@@ -690,9 +701,10 @@ class Learner:
                 param_idx += sz
                 p.data = torch.from_numpy(new_data).float().cuda().view(p.shape)
 
+        final_features, final_labels = sample_features()
         with torch.no_grad():
-            logits = stitched_logits_from_heads(all_features)
-            final_macro, _ = macro_class_accuracy(logits, all_labels)
+            logits = stitched_logits_from_heads(final_features)
+            final_macro, _ = macro_class_accuracy(logits, final_labels)
 
         t_align_total = time.time() - t_align_start
         self._total_align_time += t_align_total
