@@ -62,7 +62,7 @@ EXPERIMENT_CONFIGS = {
         "train_prefix": "kcea",
 
         # Parameter merging (TIES)
-        "model_merge":             "ties",
+        "model_merge":             "max",
         "model_merge_coef":        1.0,
         "model_merge_topk":        100,
         "model_merge_incremental": True,
@@ -110,28 +110,19 @@ PARAM_SWEEP = {
     # "train_ca_nes_lr":                   [0.001, 0.01, 0.1],
     # "train_ca_nes_popsize":              [50, 100, 200],
     # "train_ca_nes_iterations":           [100, 200, 400],
-    # "train_ca_nes_sigma_init":           [1e-4, 1e-3, 1e-2],
-    # "train_ca_nes_sigma_final":          [1e-5, 1e-4, 1e-3],
-    # "train_ca_nes_sigma_min":            [1e-6, 1e-5, 1e-4],
-    # "train_ca_nes_sigma_max":            [1e-3, 1e-2, 1e-1],
     # "train_ca_nes_patience":             [-1, 10, 30, 50],
 
     # ── Classifier alignment ──────────────────────────────────────────────────
     # "train_ca_sample_method":            ["covariance", "diagonal", "variance"],
     # "train_ca_samples_per_class":        [128, 256, 512],
-    # "train_ca_lambda_old_default":       [0.0, 1e-4, 1e-2],
-    # "train_ca_lambda_cur_default":       [0.0, 1e-4, 1e-2],
+    # "train_ca_lambda_old_default":       [0.0, 1e-2],
+    # "train_ca_lambda_cur_default":       [0.0, 1e-2],
 
     # ── Model merging ─────────────────────────────────────────────────────────
-    # "model_merge_topk":                  [20, 50, 100],
-    # "model_merge_coef":                  [0.5, 1.0, 1.5],
-    # "model_merge":                       ["none", "ties", "max", "max_abs", "min"],
+    # "model_merge_coef":                  [0.1, 0.3, 0.5, 0.7, 1.0],
+    # "model_merge":                       ["ties", "max", "max_abs", "min"],
 
     # ── Backbone / LoRA ───────────────────────────────────────────────────────
     # "model_lora_r":                      [16, 32, 64],
     # "model_lora_alpha":                  [32, 64, 128],
-
-    # ── Training schedule ─────────────────────────────────────────────────────
-    # "train_epochs":                      [5, 10, 20],
-    # "train_base_lr":                     [1e-3, 5e-3, 1e-2],
 }
