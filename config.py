@@ -61,7 +61,7 @@ EXPERIMENT_CONFIGS = {
     "kcea_ft": {
         "train_prefix": "kcea_ft",
 
-        # Parameter merging (TIES)
+        # Parameter merging
         "model_merge":             "max",
         "model_merge_coef":        1.0,
         "model_merge_topk":        100,
@@ -119,8 +119,9 @@ PARAM_SWEEP = {
     # "train_ca_lambda_cur_default":       [0.0, 1e-2],
 
     # ── Model merging ─────────────────────────────────────────────────────────
+    # "model_merge_incremental":           [True, False],
     # "model_merge_coef":                  [0.1, 0.3, 0.5, 0.7, 1.0],
-    # "model_merge":                       ["ties", "max", "max_abs", "min"],
+    # "model_merge":                       ["ties", "max", "max_abs", "min", "avg"],
 
     # ── Backbone / LoRA ───────────────────────────────────────────────────────
     # "model_lora_r":                      [16, 32, 64],

@@ -114,6 +114,8 @@ def merge(base_params, tasks_params, method="ties", lamb=1.0, topk=100):
             abs_stacked = torch.abs(stacked)
             max_idx = torch.argmax(abs_stacked, dim=0)
             merged_tv = torch.gather(stacked, 0, max_idx.unsqueeze(0)).squeeze(0)
+        elif method == "avg":
+            merged_tv = torch.stack(tvs, dim=0).mean(dim=0)
 
         params[name] = base_tv + lamb * merged_tv
 
