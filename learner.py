@@ -187,19 +187,22 @@ class Learner:
         logging.info("[Summary]")
 
         # Storage
-        # PEFT params = only the trainable LoRA adapter weights (frozen pretrained backbone not counted,
-        # it is always available from the original pretrained model)
-        peft_bytes  = sum(p.numel() * p.element_size() for p in self.model.backbone.parameters() if p.requires_grad)
+        # Breakdown: frozen pretrained backbone (shared, not owned) vs PEFT adapter vs heads vs stats
+        frozen_bytes   = sum(p.numel() * p.element_size() for p in self.model.backbone.parameters() if not p.requires_grad)
+        peft_bytes     = sum(p.numel() * p.element_size() for p in self.model.backbone.parameters() if p.requires_grad)
         head_ram_bytes = sum(p.numel() * p.element_size() for p in self.model.classifier.parameters())
-        actual_ram_bytes = peft_bytes + head_ram_bytes + gauss_bytes  # what we actually own in RAM
+        full_model_bytes = frozen_bytes + peft_bytes + head_ram_bytes   # comparable to baseline "model weights in RAM"
+        owned_ram_bytes  = peft_bytes + head_ram_bytes + gauss_bytes    # what KCEA actually needs to store
 
         num_tasks_run    = self._cur_task + 1
         total_disk_bytes = backbone_bytes + merged_bytes + head_bytes + align_head_bytes
         logging.info(f"[Summary] ── Storage ─────────────────────────────────────────────────────")
-        logging.info(f"[Summary]   Actual RAM (PEFT + heads + statistics)  : {_mb(actual_ram_bytes):.1f} MB")
-        logging.info(f"[Summary]     PEFT adapter params                      : {_mb(peft_bytes):.1f} MB")
-        logging.info(f"[Summary]     Classifier heads (all tasks)             : {_mb(head_ram_bytes):.1f} MB")
-        logging.info(f"[Summary]     Gaussian statistics (means + covs)       : {_mb(gauss_bytes):.1f} MB  ({self._total_classes} classes × {self.model.feature_dim}-dim)")
+        logging.info(f"[Summary]   Model weights in RAM (final task)      : {_mb(full_model_bytes):.1f} MB  [baseline-comparable]")
+        logging.info(f"[Summary]     Frozen pretrained backbone              : {_mb(frozen_bytes):.1f} MB  (shared, not stored by KCEA)")
+        logging.info(f"[Summary]     PEFT adapter params                     : {_mb(peft_bytes):.1f} MB")
+        logging.info(f"[Summary]     Classifier heads (all tasks)            : {_mb(head_ram_bytes):.1f} MB")
+        logging.info(f"[Summary]   Actual RAM owned by KCEA                : {_mb(owned_ram_bytes):.1f} MB  [PEFT + heads + statistics]")
+        logging.info(f"[Summary]     Gaussian statistics (means + covs)      : {_mb(gauss_bytes):.1f} MB  ({self._total_classes} classes × {self.model.feature_dim}-dim)")
         logging.info(f"[Summary]   Total written to disk (training)       : {_mb(self._total_written_bytes):.1f} MB")
         logging.info(f"[Summary]   On-disk checkpoints (current)          : {_mb(total_disk_bytes):.1f} MB  ({len(ckpt_files)} files)")
         logging.info(f"[Summary]     Task adapter checkpoints (_backbone_T)  : {_mb(backbone_bytes):.1f} MB  ({num_tasks_run} files)")
