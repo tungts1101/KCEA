@@ -59,7 +59,7 @@ BASE_CONFIG = {
 # You can define multiple variants here to compare them in a single run.
 EXPERIMENT_CONFIGS = {
     "kcea_ft": {
-        "train_prefix": "kcea",
+        "train_prefix": "kcea_ft",
 
         # Parameter merging (TIES)
         "model_merge":             "max",
