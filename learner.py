@@ -85,7 +85,7 @@ class Learner:
             self.after_task()
             self._peak_storage_bytes = max(self._peak_storage_bytes, self._current_storage_bytes())
 
-        self._save(self.model.state_dict(), self.model_checkpoint())
+        torch.save(self.model.state_dict(), self.model_checkpoint())  # reproduce only, not counted in storage
 
         self._log_final_summary()
 
@@ -222,6 +222,12 @@ class Learner:
 
         for clz in range(self._known_classes, self._total_classes):
             self._cls_to_task_idx[clz] = self._cur_task
+
+        if task > 0 and self._config.get("train_merge", False):
+            prev_merged = self.merged_checkpoint(task - 1)
+            if os.path.exists(prev_merged):
+                self.load_backbone(torch.load(prev_merged))
+                logging.info(f"[Training] Loaded merged backbone (task {task - 1}) as init for task {task}")
 
     def after_task(self):
         self._known_classes = self._total_classes
