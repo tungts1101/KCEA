@@ -52,7 +52,8 @@ class Learner:
 
         self.model = Model(config)
         self.model.cuda()
-        torch.save(self.model.get_backbone_trainable_params(), self.backbone_checkpoint())
+        self._total_written_bytes = 0  # cumulative bytes written to disk across all saves
+        self._save(self.model.get_backbone_trainable_params(), self.backbone_checkpoint())
         self._mlp_faa = 0.0
         self._mlp_ffm = 0.0
         self._mlp_asa = 0.0
@@ -84,12 +85,16 @@ class Learner:
             self.after_task()
             self._peak_storage_bytes = max(self._peak_storage_bytes, self._current_storage_bytes())
 
-        torch.save(
-            self.model.state_dict(),
-            self.model_checkpoint(),
-        )
+        self._save(self.model.state_dict(), self.model_checkpoint())
 
         self._log_final_summary()
+
+    def _save(self, obj, path):
+        """torch.save wrapper that accumulates total bytes written to disk."""
+        torch.save(obj, path)
+        size = os.path.getsize(path)
+        self._total_written_bytes += size
+        logging.info(f"[Storage] Saved {os.path.basename(path)}  ({size / 1024**2:.2f} MB)  |  cumulative written: {self._total_written_bytes / 1024**2:.2f} MB")
 
     def _current_storage_bytes(self):
         """Sum bytes of all checkpoint files belonging to this run."""
@@ -114,7 +119,6 @@ class Learner:
         active_time = wall_time - self._total_eval_time - self._total_data_time
 
         # ── Storage breakdown ─────────────────────────────────────────────────
-        final_bytes = self._current_storage_bytes()
         pfx = self.prefix()
         ckpt_files = [f for f in os.listdir(CHECKPOINT_DIR) if f.startswith(pfx)] if os.path.isdir(CHECKPOINT_DIR) else []
 
@@ -124,14 +128,31 @@ class Learner:
                 for f in ckpt_files if keyword in f
             )
 
-        backbone_bytes  = _bytes_matching("_backbone_")
-        merged_bytes    = _bytes_matching("_merged_")
-        head_bytes      = sum(
+        backbone_bytes   = _bytes_matching("_backbone_")
+        merged_bytes     = _bytes_matching("_merged_")
+        head_bytes       = sum(
             os.path.getsize(os.path.join(CHECKPOINT_DIR, f))
             for f in ckpt_files
             if "_head_" in f and "_alignment" not in f
         )
         align_head_bytes = _bytes_matching("_alignment")
+
+        # Minimum inference-time storage:
+        #   incremental merge → only the last merged backbone is needed (1 file)
+        #   non-incremental   → all per-task adapters + last merged backbone
+        #   no merge at all   → all per-task adapters
+        # In all cases, all head files are needed.
+        num_tasks_run = self._cur_task + 1
+        last_merged_path = self.merged_checkpoint(self._cur_task)
+        last_merged_bytes = os.path.getsize(last_merged_path) if os.path.exists(last_merged_path) else 0
+        if self._config.get("train_merge", False):
+            if self._config.get("model_merge_incremental", False):
+                inference_backbone_bytes = last_merged_bytes  # 1 backbone
+            else:
+                inference_backbone_bytes = backbone_bytes + last_merged_bytes
+        else:
+            inference_backbone_bytes = backbone_bytes  # per-task adapters only
+        inference_bytes = inference_backbone_bytes + head_bytes + align_head_bytes
 
         # Gaussian statistics live in RAM (not on disk) — compute their size
         gauss_bytes = 0
@@ -167,19 +188,20 @@ class Learner:
 
         # Storage
         model_weight_bytes = sum(p.numel() * p.element_size() for p in self.model.parameters())
-        total_disk_bytes   = backbone_bytes + merged_bytes + head_bytes + align_head_bytes
         num_tasks_run      = self._cur_task + 1
-
+        total_disk_bytes   = backbone_bytes + merged_bytes + head_bytes + align_head_bytes
         logging.info(f"[Summary] ── Storage ─────────────────────────────────────────────────────")
         logging.info(f"[Summary]   Model weights in RAM (final task)      : {_mb(model_weight_bytes):.1f} MB")
         logging.info(f"[Summary]   Peak RAM (weights + statistics)        : {_mb(model_weight_bytes + gauss_bytes):.1f} MB")
-        logging.info(f"[Summary]   On-disk checkpoints                    : {_mb(total_disk_bytes):.1f} MB  ({len(ckpt_files)} files)")
+        logging.info(f"[Summary]   Total written to disk (training)       : {_mb(self._total_written_bytes):.1f} MB")
+        logging.info(f"[Summary]   On-disk checkpoints (current)          : {_mb(total_disk_bytes):.1f} MB  ({len(ckpt_files)} files)")
         logging.info(f"[Summary]     Task adapter checkpoints (_backbone_T)  : {_mb(backbone_bytes):.1f} MB  ({num_tasks_run} files)")
         logging.info(f"[Summary]     Merged backbone checkpoints (_merged_T) : {_mb(merged_bytes):.1f} MB  ({num_tasks_run} files)")
         logging.info(f"[Summary]     Classifier heads (_head_T)              : {_mb(head_bytes):.1f} MB  ({num_tasks_run} files)")
         if align_head_bytes > 0:
             n_align = len([f for f in ckpt_files if "_alignment" in f])
             logging.info(f"[Summary]     Post-alignment heads (_head_T_align)  : {_mb(align_head_bytes):.1f} MB  ({n_align} files)")
+        logging.info(f"[Summary]   Minimum inference storage              : {_mb(inference_bytes):.1f} MB  (1 backbone + {num_tasks_run} heads)")
         logging.info(f"[Summary]   RAM statistics (means/covs/etc.)       : {_mb(gauss_bytes):.1f} MB  ({self._total_classes} classes × {self.model.feature_dim}-dim)")
         logging.info("[Summary]")
 
@@ -301,7 +323,7 @@ class Learner:
                 f"Acc: {total_acc / total:.4f}"
             )
 
-        torch.save(self.model.get_backbone_trainable_params(), self.backbone_checkpoint(self._cur_task))
+        self._save(self.model.get_backbone_trainable_params(), self.backbone_checkpoint(self._cur_task))
 
         self._train_time = time.time() - t_train_start
         self._total_train_time += self._train_time
@@ -813,7 +835,7 @@ class Learner:
             self.load_backbone(backbone_params)
 
         logging.info(f"[Merging] Save merged checkpoint for task {self._cur_task}")
-        torch.save(self.model.get_backbone_trainable_params(), self.merged_checkpoint(self._cur_task))
+        self._save(self.model.get_backbone_trainable_params(), self.merged_checkpoint(self._cur_task))
 
     def load_backbone(self, backbone_params):
         self.model.backbone.load_state_dict(backbone_params, strict=False)
