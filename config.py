@@ -20,23 +20,23 @@
 # Format: "dataset_name": [(num_tasks, init_cls, increment)]
 # Uncomment a line to include that dataset in the run.
 DATA_TABLE = {
-    "cifar224":         [(10, 10, 10)],
-    "imagenetr":        [(10, 20, 20)],
-    "imageneta":        [(10, 20, 20)],
-    "cub":              [(10, 20, 20)],
-    "omnibenchmark":    [(10, 30, 30)],
+    # "cifar224":         [(10, 10, 10)],
+    # "imagenetr":        [(10, 20, 20)],
+    # "imageneta":        [(10, 20, 20)],
+    # "cub":              [(10, 20, 20)],
+    # "omnibenchmark":    [(10, 30, 30)],
     "vtab":             [(5,  10, 10)],
-    "cars":             [(10, 16, 20)]
+    # "cars":             [(10, 16, 20)]
 }
 
 
 # ── Base training hyperparameters (shared across all experiments) ─────────────
 BASE_CONFIG = {
-    "seed": [1993, 1994, 1995],
+    "seed": [1991, 1992, 1993, 1994, 1995, 1996, 1997],
 
     # Training
-    "train_merge":        False,
-    "train_ca":           False,
+    "train_merge":        True,
+    "train_ca":           True,
 
     "train_ablation":     False,
     "train_epochs":       10,
@@ -58,8 +58,11 @@ BASE_CONFIG = {
 # Each key is an experiment name; its dict is merged on top of BASE_CONFIG.
 # You can define multiple variants here to compare them in a single run.
 EXPERIMENT_CONFIGS = {
-    "kcea_ft": {
-        "train_prefix": "kcea_ft",
+    # ── Full model: fine-tuning + merging + classifier alignment ─────────────
+    "kcea": {
+        "train_prefix": "kcea",
+        "train_merge":  True,
+        "train_ca":     True,
 
         # Parameter merging
         "model_merge":             "max",
@@ -69,30 +72,20 @@ EXPERIMENT_CONFIGS = {
 
         # Classifier alignment — method selection
         "train_ca_method":             "nes",  # "nes" | "ce"
-        "train_ca_samples_per_class":  512,    # synthetic samples per class (used by NES)
+        "train_ca_samples_per_class":  512,    # synthetic samples per class
         "train_ca_sample_method":      "covariance", # sampling distribution: "covariance" | "diagonal" | "variance"
 
-        # Lambda — scales per-head sigma via f(λ) = 1/sqrt(λ):
-        #   larger λ → smaller sigma → less exploration → less update (more constrained)
-        #   smaller λ → larger sigma → more exploration → more update (freer to move)
-        #   λ = 0.0   → uses lambda_eps floor → maximum sigma (fully free)
-        "train_ca_lambda_old_default": 1e-2,   # old task heads: constrained (preserves past knowledge)
-        "train_ca_lambda_cur_default": 0.0,    # current task head: set 0.0 to let it move freely
-
         # NES optimisation
-        "train_ca_nes_sigma_init":           1e-3,   # initial base exploration std
-        "train_ca_nes_sigma_final":          1e-4,   # final base exploration std (exponential decay)
-        "train_ca_nes_sigma_min":            1e-5,   # per-task sigma lower clip
-        "train_ca_nes_sigma_max":            1e-2,   # per-task sigma upper clip
-        "train_ca_nes_lambda_eps":           1e-8,   # epsilon for importance(λ) = 1/sqrt(max(λ, eps))
+        "train_ca_nes_sigma_init":           1e-3,   # initial exploration std
+        "train_ca_nes_sigma_final":          1e-4,   # final exploration std (exponential decay)
         "train_ca_nes_lr":                   0.01,
-        "train_ca_nes_iterations":           200,
-        "train_ca_nes_popsize":              100,
-        "train_ca_nes_patience":             30,     # loss early-stop patience (iterations); -1 = run all iterations
+        "train_ca_nes_iterations":           100,
+        "train_ca_nes_popsize":              200,
+        "train_ca_nes_label_smoothing":      0.1,    # label smoothing — prevents synthetic overfitting (CE floor ≈ -log(1-ε))
 
         # CE gradient-based alignment (train_ca_method = "ce")
         "train_ce_samples_per_class":        512,    # synthetic samples per class per epoch
-        "train_ce_epochs":                   20,     # number of gradient steps
+        "train_ce_epochs":                   3,      # number of gradient steps
         "train_ce_lr":                       1e-3,   # Adam learning rate for head parameters
     },
 }
@@ -107,23 +100,16 @@ EXPERIMENT_CONFIGS = {
 # Example: to sweep NES learning rate, uncomment the "train_ca_nes_lr" line.
 PARAM_SWEEP = {
     # ── NES core ──────────────────────────────────────────────────────────────
-    # "train_ca_nes_lr":                   [0.001, 0.01, 0.1],
-    # "train_ca_nes_popsize":              [50, 100, 200],
-    # "train_ca_nes_iterations":           [100, 200, 400],
-    # "train_ca_nes_patience":             [-1, 10, 30, 50],
+    # "train_ca_nes_popsize":              [100, 200, 500],
+    # "train_ca_nes_iterations":           [50, 100, 200],
+    # "train_ca_nes_patience":             [-1, 20, 50],
 
     # ── Classifier alignment ──────────────────────────────────────────────────
     # "train_ca_sample_method":            ["covariance", "diagonal", "variance"],
-    # "train_ca_samples_per_class":        [128, 256, 512],
-    # "train_ca_lambda_old_default":       [0.0, 1e-2],
-    # "train_ca_lambda_cur_default":       [0.0, 1e-2],
+    # "train_ca_samples_per_class":        [128, 256, 512, 1024],
 
     # ── Model merging ─────────────────────────────────────────────────────────
     # "model_merge_incremental":           [True, False],
     # "model_merge_coef":                  [0.1, 0.3, 0.5, 0.7, 1.0],
     # "model_merge":                       ["ties", "max", "max_abs", "min", "avg"],
-
-    # ── Backbone / LoRA ───────────────────────────────────────────────────────
-    # "model_lora_r":                      [16, 32, 64],
-    # "model_lora_alpha":                  [32, 64, 128],
 }

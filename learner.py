@@ -57,6 +57,9 @@ class Learner:
         self._mlp_faa = 0.0
         self._mlp_ffm = 0.0
         self._mlp_asa = 0.0
+        self._pre_align_faa = None   # post-merge accuracy before alignment (None if alignment not used)
+        self._pre_align_ffm = None
+        self._pre_align_asa = None
         self._total_align_time = 0.0
         self._total_train_time = 0.0
         self._total_eval_time = 0.0
@@ -78,10 +81,44 @@ class Learner:
 
         for task in range(num_tasks):
             self.before_task(task, data_manager)
-            self.train()
+            self.train()  # SGD + merge only; alignment handled below
+
+            # ── Pre-alignment eval (post-merge accuracy) ──────────────────────
+            # Skipped for task 0 (single head — nothing to align across).
+            if self._config.get("train_ca", False) and self._cur_task > 0:
+                t_eval = time.time()
+                _, faa_pre, ffm_pre, asa_pre, _ = self._eval_task_metrics()
+                self._total_eval_time += time.time() - t_eval
+                self._pre_align_faa = faa_pre
+                self._pre_align_ffm = ffm_pre
+                self._pre_align_asa = asa_pre
+
+            # ── Alignment ─────────────────────────────────────────────────────
+            if self._config.get("train_ca", False):
+                self.align_classifier()
+
+            # ── Final eval (post-align, or post-merge/train if no alignment) ──
             t_eval = time.time()
             self.eval()
             self._total_eval_time += time.time() - t_eval
+
+            # ── Side-by-side comparison (both lines together) ─────────────────
+            if self._config.get("train_ca", False) and self._cur_task > 0:
+                logging.info(
+                    f"[Evaluation] Task {self._cur_task} [post-merge ]: "
+                    f"FAA={faa_pre:.2f}, FFM={ffm_pre:.2f}, ASA={asa_pre:.2f}"
+                )
+                logging.info(
+                    f"[Evaluation] Task {self._cur_task} [post-align ]: "
+                    f"FAA={self._mlp_faa:.2f}, FFM={self._mlp_ffm:.2f}, ASA={self._mlp_asa:.2f}"
+                )
+                logging.info(
+                    f"[Evaluation] Task {self._cur_task} [Δ alignment]: "
+                    f"ΔFAA={self._mlp_faa - faa_pre:+.2f}, "
+                    f"ΔFFM={self._mlp_ffm - ffm_pre:+.2f}, "
+                    f"ΔASA={self._mlp_asa - asa_pre:+.2f}"
+                )
+
             self.after_task()
             self._peak_storage_bytes = max(self._peak_storage_bytes, self._current_storage_bytes())
 
@@ -222,6 +259,14 @@ class Learner:
         logging.info(f"[Summary]   Peak trainable (any task)              : {peak_trainable:,}  ({peak_trainable*100/max(peak_total_at_task,1):.2f}% of {peak_total_at_task:,} at that task)")
         logging.info(f"[Summary]   Final task trainable                   : {last_trainable:,}  ({last_trainable*100/max(total_params,1):.2f}% of total at final task)")
         logging.info("[Summary]")
+
+        # Alignment effect — only when alignment was used (task > 0 ran)
+        if self._pre_align_faa is not None:
+            logging.info(f"[Summary] ── Alignment effect (end of run) ──────────────────────────────────")
+            logging.info(f"[Summary]   Post-merge  : FAA={self._pre_align_faa:.2f}  FFM={self._pre_align_ffm:.2f}  ASA={self._pre_align_asa:.2f}")
+            logging.info(f"[Summary]   Post-align  : FAA={self._mlp_faa:.2f}  FFM={self._mlp_ffm:.2f}  ASA={self._mlp_asa:.2f}")
+            logging.info(f"[Summary]   Δ alignment : ΔFAA={self._mlp_faa-self._pre_align_faa:+.2f}  ΔFFM={self._mlp_ffm-self._pre_align_ffm:+.2f}  ΔASA={self._mlp_asa-self._pre_align_asa:+.2f}")
+            logging.info("[Summary]")
         logging.info("=" * 80)
 
     def before_task(self, task, data_manager):
@@ -273,7 +318,7 @@ class Learner:
         )
         self.model.cuda()
 
-        epochs = self._config["train_epochs"]
+        epochs = int(self._config["train_epochs"])
         base_lr = self._config["train_base_lr"]
         weight_decay = self._config["train_weight_decay"]
 
@@ -347,9 +392,6 @@ class Learner:
             t_merge = time.time()
             self.merge()
             self._total_merge_time += time.time() - t_merge
-
-        if self._config["train_ca"]:
-            self.align_classifier()
 
     def compute_multivariate_normal(self):
         _t_gauss = time.time()
@@ -441,7 +483,7 @@ class Learner:
         """Append grouped accuracies to mlp_matrix, update metrics, and log."""
         self.mlp_matrix.append(grouped)
         self._mlp_faa, self._mlp_ffm, self._mlp_asa = faa, ffm, asa
-        logging.info(f"[Evaluation] Task {self._cur_task}: Acc={acc:.2f}, FAA={faa:.2f}, FFM={ffm:.2f}, ASA={asa:.2f}")
+        logging.info(f"[Evaluation] Task {self._cur_task}: FAA={faa:.2f}, FFM={ffm:.2f}, ASA={asa:.2f}")
         if self._total_classes == self._total_classnum:
             logging.info("[Evaluation] Accuracy matrix:")
             for row in self.mlp_matrix:
@@ -495,44 +537,49 @@ class Learner:
         # "variance"   — isotropic Normal using stored scalar variance per class
         sample_method = self._config.get("train_ca_sample_method", "covariance")
 
+        # Precompute GPU sampling tensors once — avoids per-call Cholesky and CPU→GPU transfers.
+        # _class_means: [C, D],  _class_covs: [C,D] | [C] | [C,D,D] depending on sample_method.
+        C = self._total_classes
+        D = self._class_means.shape[1]
+        _all_means = self._class_means[:C].cuda().float()           # [C, D]
+        _labels_base = torch.arange(C, device=_all_means.device)   # [C]
+
+        if sample_method == "diagonal":
+            _all_stds = torch.sqrt(self._class_covs[:C].cuda().float())  # [C, D]
+        elif sample_method == "variance":
+            _all_stds = torch.sqrt(self._class_covs[:C].cuda().float()).unsqueeze(1)  # [C, 1]
+        else:  # "covariance" — Cholesky once for all classes: [C, D, D]
+            try:
+                _all_L = torch.linalg.cholesky(self._class_covs[:C].cuda().float())  # [C, D, D]
+            except Exception as e:
+                logging.warning(f"[Alignment] Batched Cholesky failed ({e}), falling back to per-class")
+                _all_L = None
+
         def sample_features(n=None):
             k = n if n is not None else num_sampled_pcls
-            sampled_data, sampled_label = [], []
-            for c_id in range(self._total_classes):
-                if hasattr(self, "_class_means") and c_id < self._class_means.shape[0]:
-                    try:
-                        cls_mean = self._class_means[c_id].cuda().float()
-                        if sample_method == "diagonal":
-                            std = torch.sqrt(self._class_covs[c_id].cuda().float())
-                            feats = torch.normal(cls_mean.unsqueeze(0).expand(k, -1), std.unsqueeze(0).expand(k, -1))
-                        elif sample_method == "variance":
-                            scalar_std = torch.sqrt(self._class_covs[c_id].cuda().float()).item()
-                            feats = torch.normal(cls_mean.unsqueeze(0).expand(k, -1),
-                                                 torch.full((k, cls_mean.shape[0]), scalar_std, device=cls_mean.device))
-                        else:  # "covariance"
-                            cls_cov = self._class_covs[c_id].cuda().float()
-                            dist = MultivariateNormal(cls_mean, cls_cov)
-                            feats = dist.sample((k,))
-                        if torch.isnan(feats).any():
-                            raise ValueError("NaN in sampled features")
-                        feats = F.layer_norm(feats, (feats.shape[-1],))
-                        sampled_data.append(feats)
-                        sampled_label.extend([c_id] * k)
-                    except Exception as e:
-                        logging.warning(f"[Alignment] Failed to sample from class {c_id}: {e}")
-                        continue
-            if not sampled_data:
+            try:
+                z = torch.randn(C, k, D, device=_all_means.device)   # [C, k, D]
+                if sample_method in ("diagonal", "variance"):
+                    feats = _all_means.unsqueeze(1) + _all_stds.unsqueeze(1) * z  # [C, k, D]
+                else:  # covariance: mean + L @ z^T, broadcast over batch
+                    if _all_L is not None:
+                        feats = _all_means.unsqueeze(1) + (_all_L @ z.transpose(1, 2)).transpose(1, 2)
+                    else:  # per-class fallback if batched Cholesky failed
+                        feats = torch.stack([
+                            MultivariateNormal(_all_means[c], self._class_covs[c].cuda().float()).sample((k,))
+                            for c in range(C)
+                        ])  # [C, k, D]
+                feats = feats.reshape(C * k, D)                       # [C*k, D]
+                feats = F.layer_norm(feats, (D,))
+                if torch.isnan(feats).any():
+                    raise ValueError("NaN in sampled features")
+                labels = _labels_base.repeat_interleave(k)            # [C*k]
+                return feats, labels
+            except Exception as e:
+                logging.warning(f"[Alignment] Failed to sample: {e}")
                 return None, None
-            features = torch.cat(sampled_data, dim=0).float().cuda(non_blocking=True)
-            labels = torch.tensor(sampled_label).long().cuda(non_blocking=True)
-            return features, labels
 
-        # Validate that sampling works before entering the NES loop
-        _check_feats, _ = sample_features()
-        if _check_feats is None:
-            logging.warning("No samples generated, skipping classifier alignment")
-            return
-        logging.info(f"[Alignment] Stochastic synthetic sampler ready: {_check_feats.shape[0]} samples/draw, {self._total_classes} classes")
+        logging.info(f"[Alignment] Synthetic sampler ready: {C * num_sampled_pcls} samples total, {C} classes")
 
         # ----------------------------
         # 2) Head → class range mapping and stitched logits
@@ -578,7 +625,6 @@ class Learner:
         if ca_method == "nes":
             # ── Build genome ──────────────────────────────────────────────────
             head_params = []
-            param_shapes = []
             head_param_slices = {}
             offset = 0
 
@@ -586,14 +632,12 @@ class Learner:
                 head = self.model.classifier.heads[task_idx]
                 head_start = offset
                 for p in head.parameters():
-                    arr = p.data.detach().cpu().numpy().flatten()
-                    head_params.append(arr)
-                    param_shapes.append(p.shape)
-                    offset += arr.size
-                head_end = offset
-                head_param_slices[task_idx] = (head_start, head_end)
+                    head_params.append(p.data.detach().cpu().numpy().flatten())
+                    offset += p.data.numel()
+                head_param_slices[task_idx] = (head_start, offset)
 
-            theta = np.concatenate(head_params).astype(np.float32)
+            theta_np = np.concatenate(head_params).astype(np.float32)
+            D_total = theta_np.size
 
             # ── Diagnostics ───────────────────────────────────────────────────
             total_model_params = count_parameters(self.model)
@@ -608,149 +652,134 @@ class Learner:
             logging.info("[Alignment][NES] === Alignment Cost Report ===")
             logging.info(f"[Alignment][NES]   Task: {self._cur_task} | Classes seen: {self._total_classes}")
             logging.info(f"[Alignment][NES]   Synthetic samples: K={K}/class × {self._total_classes} classes = {K * self._total_classes:,} total")
-            logging.info(f"[Alignment][NES]   Head params (theta): {theta.size:,} / model total {total_model_params:,} ({theta.size * 100 / total_model_params:.3f}%)")
+            logging.info(f"[Alignment][NES]   Head params (theta): {D_total:,} / model total {total_model_params:,} ({D_total * 100 / total_model_params:.3f}%)")
             logging.info(f"[Alignment][NES]   Backbone params: {backbone_params:,}")
             logging.info(f"[Alignment][NES]   Gaussian statistics memory: {gaussian_mem_mb:.2f} MB ({self._total_classes} classes × {self.model.feature_dim}-dim)")
             logging.info(f"[Alignment][NES]   Stored adapter checkpoints: {adapter_mem_mb:.2f} MB ({self._cur_task + 1} tasks)")
 
-            # ── Per-head trust region strengths ───────────────────────────────
-            lambda_cfg = self._config.get("train_ca_lambda_head", {})
-            default_old = float(self._config.get("train_ca_lambda_old_default", 1e-4))
-            default_cur = float(self._config.get("train_ca_lambda_cur_default", 1e-5))
+            # ── Move theta to GPU — no numpy↔cuda transfers in hot path ──────
+            theta_gpu = torch.from_numpy(theta_np).cuda()
+            label_smoothing = float(self._config.get("train_ca_nes_label_smoothing", 0.1))
 
-            lambda_task = {}
-            for t in range(self._cur_task + 1):
-                lam = lambda_cfg.get(str(t), lambda_cfg.get(t, default_cur if t == self._cur_task else default_old))
-                lambda_task[t] = float(lam)
+            # ── Batched population objective ──────────────────────────────────
+            # Replaces the Python `for i in range(pop)` loop with GPU einsum.
+            # Memory is controlled by two chunk sizes:
+            #   POP_CHUNK  — population members per GPU call (controls [N,F,C] peak)
+            #   FEAT_CHUNK — feature rows per mini-batch    (controls [N,F,C] peak)
+            # Peak tensor: [POP_CHUNK, FEAT_CHUNK, C_total] × 4 bytes.
+            # Defaults (16, 2048) → ~25 MB for C_total=200.
+            POP_CHUNK  = 16
+            FEAT_CHUNK = 2048
 
-            # ── Objective: macro accuracy (NES maximises fitness; loss = -acc) ─
-            def objective_function(params_flat: np.ndarray) -> float:
-                try:
-                    features, labels = sample_features()
-                    if features is None:
-                        return 1.0
+            def batched_objective(
+                params_batch: torch.Tensor,  # [N, D_total]
+                features: torch.Tensor,       # [B, D_feat]
+                labels: torch.Tensor,         # [B]
+            ) -> torch.Tensor:               # [N]  CE loss per candidate
+                N = params_batch.size(0)
+                B_total = features.size(0)
+                total_nll = torch.zeros(N, device=features.device)
+                for f0 in range(0, B_total, FEAT_CHUNK):
+                    fc = features[f0: f0 + FEAT_CHUNK]  # [F, D]
+                    lc = labels  [f0: f0 + FEAT_CHUNK]  # [F]
+                    F_sz = fc.size(0)
+                    logits = torch.zeros(N, F_sz, num_global_classes, device=features.device)
+                    for t in range(self._cur_task + 1):
+                        c_lo, c_hi = head_class_ranges[t]
+                        s_lo, s_hi = head_param_slices[t]
+                        n_cls = c_hi - c_lo + 1
+                        # W[n,c,d] × fc[f,d] → logits[n,f,c]
+                        W = params_batch[:, s_lo:s_hi].view(N, n_cls, -1)  # [N, C_t, D]
+                        logits[:, :, c_lo: c_hi + 1] = torch.einsum("fd,ncd->nfc", fc, W)
+                    nll = F.cross_entropy(
+                        logits.reshape(N * F_sz, num_global_classes),
+                        lc.repeat(N),
+                        reduction="none",
+                        label_smoothing=label_smoothing,
+                    ).view(N, F_sz).sum(dim=1)
+                    total_nll += nll
+                return total_nll / B_total
 
-                    param_idx = 0
-                    original_params_snap = {}
-                    for task_idx in range(self._cur_task + 1):
-                        head = self.model.classifier.heads[task_idx]
-                        original_params_snap[task_idx] = []
-                        for _, p in head.named_parameters():
-                            original_params_snap[task_idx].append(p.data.clone())
-                            sz = p.numel()
-                            new_data = params_flat[param_idx:param_idx + sz]
-                            param_idx += sz
-                            p.data = torch.from_numpy(new_data).float().cuda().view(p.shape)
-
-                    with torch.no_grad():
-                        logits = stitched_logits_from_heads(features)
-                        macro_acc, _ = macro_class_accuracy(logits, labels)
-
-                    loss = -macro_acc
-
-                    for task_idx in range(self._cur_task + 1):
-                        head = self.model.classifier.heads[task_idx]
-                        for p, w in zip(head.parameters(), original_params_snap[task_idx]):
-                            p.data = w
-
-                    return float(loss)
-
-                except Exception as e:
-                    logging.warning(f"[Alignment][NES] Error in objective function: {e}")
-                    return 1.0
+            def eval_population(
+                params_batch: torch.Tensor,
+                features: torch.Tensor,
+                labels: torch.Tensor,
+            ) -> torch.Tensor:
+                N = params_batch.size(0)
+                losses = torch.empty(N, device=features.device)
+                for n0 in range(0, N, POP_CHUNK):
+                    n1 = min(n0 + POP_CHUNK, N)
+                    losses[n0:n1] = batched_objective(params_batch[n0:n1], features, labels)
+                return losses
 
             # ── Sigma scheduling ──────────────────────────────────────────────
-            base_sigma_init = float(self._config.get("train_ca_nes_sigma_init", 1e-3))
+            base_sigma_init  = float(self._config.get("train_ca_nes_sigma_init",  1e-3))
             base_sigma_final = float(self._config.get("train_ca_nes_sigma_final", 1e-4))
-            sigma_min = float(self._config.get("train_ca_nes_sigma_min", 1e-5))
-            sigma_max = float(self._config.get("train_ca_nes_sigma_max", 1e-2))
-            lambda_eps = float(self._config.get("train_ca_nes_lambda_eps", 1e-8))
 
-            def importance(lam):
-                return 1.0 / np.sqrt(max(float(lam), lambda_eps))
-
-            def get_sigma_vec(iteration, total_iters):
-                sigma_base = base_sigma_init * (base_sigma_final / base_sigma_init) ** (
+            def get_sigma(iteration, total_iters):
+                return float(base_sigma_init * (base_sigma_final / base_sigma_init) ** (
                     iteration / max(total_iters - 1, 1)
-                )
-                sigma = np.empty_like(theta)
-                for k in range(self._cur_task + 1):
-                    s, e = head_param_slices[k]
-                    sigma[s:e] = np.clip(sigma_base * importance(lambda_task[k]), sigma_min, sigma_max)
-                return sigma.astype(np.float32)
+                ))
 
             # ── NES loop ──────────────────────────────────────────────────────
-            lr = float(self._config.get("train_ca_nes_lr", 0.05))
-            iters = int(self._config.get("train_ca_nes_iterations", 50))
-            pop = int(self._config.get("train_ca_nes_popsize", 30))
+            lr    = float(self._config.get("train_ca_nes_lr",         0.01))
+            iters = int  (self._config.get("train_ca_nes_iterations",  100))
+            pop   = int  (self._config.get("train_ca_nes_popsize",     200))
 
             logging.info(f"[Alignment][NES] T={iters}, P={pop}, K={K}, lr={lr}")
-            logging.info(f"[Alignment][NES] sigma schedule: init={base_sigma_init:.3e}, final={base_sigma_final:.3e}, clip=[{sigma_min:.1e},{sigma_max:.1e}]")
-            logging.info(f"[Alignment][NES] per-task sigma scale f(λ): " + ", ".join(
-                f"T{k}={importance(lambda_task[k]):.3f}(λ={lambda_task[k]:.1e})" for k in range(self._cur_task + 1)
-            ))
-            logging.info(f"[Alignment][NES] Forward passes per iteration: 2P+1={2*pop+1} | Max total: {(2*pop+1)*iters:,}")
+            logging.info(f"[Alignment][NES] sigma schedule: init={base_sigma_init:.3e}, final={base_sigma_final:.3e}")
+            logging.info(f"[Alignment][NES] pop chunks: {POP_CHUNK}, feat chunks: {FEAT_CHUNK}")
 
-            best_theta = theta.copy()
-            best_loss = objective_function(best_theta)
-            no_improve_loss = 0
-            patience = int(self._config.get("train_ca_nes_patience", 30))
+            best_theta_gpu = theta_gpu.clone()
+            best_loss = float("inf")
             iter_times = []
 
             for it in range(iters):
                 t_iter_start = time.time()
-                sigma_vec = get_sigma_vec(it, iters)
 
-                eps = np.random.randn(pop, theta.size).astype(np.float32)
+                # Fresh feature batch every iteration — unbiased gradient estimate
+                _feats, _labels = sample_features()
+                if _feats is None:
+                    continue
+                sigma = get_sigma(it, iters)
 
-                losses_pos = np.empty(pop, dtype=np.float32)
-                losses_neg = np.empty(pop, dtype=np.float32)
-                for i in range(pop):
-                    step = sigma_vec * eps[i]
-                    losses_pos[i] = objective_function(theta + step)
-                    losses_neg[i] = objective_function(theta - step)
+                # Antithetic perturbations — all on GPU, no numpy round-trips
+                eps_gpu   = torch.randn(pop, D_total, device="cuda", dtype=torch.float32)
+                theta_pos = theta_gpu.unsqueeze(0) + sigma * eps_gpu   # [P, D]
+                theta_neg = theta_gpu.unsqueeze(0) - sigma * eps_gpu   # [P, D]
+
+                with torch.no_grad():
+                    losses_2p = eval_population(
+                        torch.cat([theta_pos, theta_neg], dim=0), _feats, _labels
+                    )  # [2P]
 
                 iter_times.append(time.time() - t_iter_start)
 
-                deltaL = (losses_pos - losses_neg)[:, None]
-                grad = (deltaL * (eps / np.maximum(sigma_vec, 1e-12))).mean(axis=0) / 2.0
-                theta = theta - lr * grad.astype(np.float32)
+                losses_pos_t = losses_2p[:pop]   # [P]
+                losses_neg_t = losses_2p[pop:]   # [P]
 
-                cur_loss = objective_function(theta)
-                if cur_loss < best_loss - 1e-6:
+                # Fitness shaping: rank-normalise to [-0.5, 0.5]
+                raw_delta = (losses_pos_t - losses_neg_t).cpu().numpy()
+                ranks = np.argsort(np.argsort(raw_delta)).astype(np.float32)
+                shaped = torch.from_numpy(ranks / (pop - 1) - 0.5).to(eps_gpu)  # [P]
+
+                # NES gradient estimate + plain SGD step
+                # No /sigma: fitness shaping already gives scale-invariant signal;
+                # dividing by sigma (1e-3) would amplify the gradient 1000×.
+                grad = (shaped[:, None] * eps_gpu).mean(dim=0)  # [D]
+                theta_gpu = theta_gpu - lr * grad
+
+                # Track best on the same batch used for the gradient
+                with torch.no_grad():
+                    cur_loss = eval_population(theta_gpu.unsqueeze(0), _feats, _labels)[0].item()
+                if cur_loss < best_loss:
                     best_loss = cur_loss
-                    best_theta = theta.copy()
-                    no_improve_loss = 0
-                else:
-                    no_improve_loss += 1
+                    best_theta_gpu = theta_gpu.clone()
 
                 if it % 10 == 0 or it == iters - 1:
-                    param_idx = 0
-                    snap = {}
-                    for t in range(self._cur_task + 1):
-                        head = self.model.classifier.heads[t]
-                        snap[t] = [p.data.clone() for p in head.parameters()]
-                        for p in head.parameters():
-                            sz = p.numel()
-                            new_data = best_theta[param_idx:param_idx + sz]
-                            param_idx += sz
-                            p.data = torch.from_numpy(new_data).float().cuda().view(p.shape)
-                    log_features, log_labels = sample_features()
-                    with torch.no_grad():
-                        logits = stitched_logits_from_heads(log_features)
-                        macro_acc, _ = macro_class_accuracy(logits, log_labels)
-                    for t in range(self._cur_task + 1):
-                        head = self.model.classifier.heads[t]
-                        for p, w in zip(head.parameters(), snap[t]):
-                            p.data = w
                     logging.info(
-                        f"[Alignment][NES-diag] iter {it}: macro_acc={macro_acc:.4f}, "
-                        f"best_loss={best_loss:.6f}, sigma_cur={sigma_vec[head_param_slices[self._cur_task][0]]:.3e}"
+                        f"[Alignment][NES-diag] iter {it}: best_loss={best_loss:.6f}, sigma={sigma:.3e}"
                     )
-
-                if patience != -1 and no_improve_loss >= patience:
-                    logging.info(f"[Alignment][NES-diag] Early stop at iter {it}: loss no improvement for {patience} steps.")
-                    break
 
             # ── Apply best solution ───────────────────────────────────────────
             param_idx = 0
@@ -758,9 +787,8 @@ class Learner:
                 head = self.model.classifier.heads[t]
                 for p in head.parameters():
                     sz = p.numel()
-                    new_data = best_theta[param_idx:param_idx + sz]
+                    p.data = best_theta_gpu[param_idx: param_idx + sz].view(p.shape).clone()
                     param_idx += sz
-                    p.data = torch.from_numpy(new_data).float().cuda().view(p.shape)
 
             final_features, final_labels = sample_features()
             with torch.no_grad():
@@ -773,7 +801,7 @@ class Learner:
 
             logging.info("[Alignment][NES] === Convergence & Cost Summary ===")
             logging.info(f"[Alignment][NES]   Iterations run: {actual_iters} / {iters}")
-            logging.info(f"[Alignment][NES]   Synthetic macro-acc: {-best_loss:.4f} → {final_macro:.4f}")
+            logging.info(f"[Alignment][NES]   Synthetic CE loss: {best_loss:.4f} → final macro-acc: {final_macro:.4f}")
             logging.info(f"[Alignment][NES]   Wall-clock: total={t_align_total:.1f}s, mean/iter={np.mean(iter_times):.2f}s")
             if hasattr(self, "_train_time") and self._train_time > 0:
                 logging.info(f"[Alignment][NES]   Alignment overhead: {t_align_total:.1f}s / train {self._train_time:.1f}s = {t_align_total / self._train_time:.2f}x")
@@ -913,9 +941,12 @@ def run_single_experiment(dataset_name, config_name, experiment_config, seed):
     config.update(experiment_config)
 
     if dataset_name == "imageneta":
-        config["train_batch_size"] = 32
+        config["train_batch_size"] = 48
 
-    result = {"mlp_faa": 0.0, "mlp_ffm": 0.0, "mlp_asa": 0.0}
+    result = {
+        "mlp_faa": 0.0, "mlp_ffm": 0.0, "mlp_asa": 0.0,
+        "pre_align_faa": None, "pre_align_ffm": None, "pre_align_asa": None,
+    }
     try:
         logging.info("Configuration:")
         for key, value in config.items():
@@ -928,6 +959,9 @@ def run_single_experiment(dataset_name, config_name, experiment_config, seed):
         result["mlp_faa"] = learner._mlp_faa
         result["mlp_ffm"] = learner._mlp_ffm
         result["mlp_asa"] = learner._mlp_asa
+        result["pre_align_faa"] = learner._pre_align_faa
+        result["pre_align_ffm"] = learner._pre_align_ffm
+        result["pre_align_asa"] = learner._pre_align_asa
 
         del learner
         torch.cuda.empty_cache()
@@ -937,6 +971,22 @@ def run_single_experiment(dataset_name, config_name, experiment_config, seed):
         import traceback
         logging.error(f"[Experiment {dataset_name}_{config_name}] {type(e).__name__}: {e}")
         logging.error(traceback.format_exc())
+
+    # ── Per-seed result block — grep for [RESULT] to extract ─────────────────
+    has_align = result["pre_align_faa"] is not None
+    logging.info("")
+    logging.info("[RESULT] " + "─" * 60)
+    logging.info(f"[RESULT]  method  : {config_name}")
+    logging.info(f"[RESULT]  dataset : {dataset_name}")
+    logging.info(f"[RESULT]  seed    : {seed}")
+    if has_align:
+        logging.info(f"[RESULT]  FAA_pre : {result['pre_align_faa']:.4f}  (post-merge)")
+        logging.info(f"[RESULT]  FFM_pre : {result['pre_align_ffm']:.4f}  (post-merge)")
+        logging.info(f"[RESULT]  ASA_pre : {result['pre_align_asa']:.4f}  (post-merge)")
+    logging.info(f"[RESULT]  FAA     : {result['mlp_faa']:.4f}  {'(post-align)' if has_align else ''}")
+    logging.info(f"[RESULT]  FFM     : {result['mlp_ffm']:.4f}  {'(post-align)' if has_align else ''}")
+    logging.info(f"[RESULT]  ASA     : {result['mlp_asa']:.4f}  {'(post-align)' if has_align else ''}")
+    logging.info("[RESULT] " + "─" * 60)
 
     return result
 
@@ -1002,22 +1052,48 @@ def run_experiments():
                 logging.info(f"Experiment {dataset_name}_{config_name}_seed{seed} time: {time.time() - t0:.2f}s")
 
                 if config_name not in dataset_results:
-                    dataset_results[config_name] = {"seeds": [], "mlp_faa": [], "mlp_ffm": [], "mlp_asa": []}
+                    dataset_results[config_name] = {
+                        "seeds": [],
+                        "mlp_faa": [], "mlp_ffm": [], "mlp_asa": [],
+                        "pre_align_faa": [], "pre_align_ffm": [], "pre_align_asa": [],
+                    }
 
                 dataset_results[config_name]["seeds"].append(seed)
                 dataset_results[config_name]["mlp_faa"].append(result["mlp_faa"])
                 dataset_results[config_name]["mlp_ffm"].append(result["mlp_ffm"])
                 dataset_results[config_name]["mlp_asa"].append(result["mlp_asa"])
-
-            logging.info("\n" + "=" * 80)
-            logging.info(f"SUMMARY FOR {dataset_name.upper()} - {config_name.upper()}")
-            logging.info("=" * 80)
+                if result["pre_align_faa"] is not None:
+                    dataset_results[config_name]["pre_align_faa"].append(result["pre_align_faa"])
+                    dataset_results[config_name]["pre_align_ffm"].append(result["pre_align_ffm"])
+                    dataset_results[config_name]["pre_align_asa"].append(result["pre_align_asa"])
 
             vals = dataset_results[config_name]
-            if vals["mlp_asa"]:
-                logging.info(f"  MLP - ASA: {np.mean(vals['mlp_asa']):.2f} ± {np.std(vals['mlp_asa']):.2f}")
-                logging.info(f"  MLP - FAA: {np.mean(vals['mlp_faa']):.2f} ± {np.std(vals['mlp_faa']):.2f}")
-                logging.info(f"  MLP - FFM: {np.mean(vals['mlp_ffm']):.2f} ± {np.std(vals['mlp_ffm']):.2f}")
+            has_align = len(vals["pre_align_faa"]) > 0
+            # ── Aggregate result block — grep for [AGGREGATE] to extract ──────
+            logging.info("")
+            logging.info("[AGGREGATE] " + "─" * 57)
+            logging.info(f"[AGGREGATE]  method  : {config_name}")
+            logging.info(f"[AGGREGATE]  dataset : {dataset_name}")
+            logging.info(f"[AGGREGATE]  seeds   : {vals['seeds']}")
+            if vals["mlp_faa"]:
+                faa_arr = np.array(vals["mlp_faa"])
+                ffm_arr = np.array(vals["mlp_ffm"])
+                asa_arr = np.array(vals["mlp_asa"])
+                if has_align:
+                    pre_faa = np.array(vals["pre_align_faa"])
+                    pre_ffm = np.array(vals["pre_align_ffm"])
+                    pre_asa = np.array(vals["pre_align_asa"])
+                    logging.info(f"[AGGREGATE]  FAA_pre : {np.mean(pre_faa):.4f} ± {np.std(pre_faa):.4f}  {[round(v,4) for v in pre_faa.tolist()]}  (post-merge)")
+                    logging.info(f"[AGGREGATE]  FFM_pre : {np.mean(pre_ffm):.4f} ± {np.std(pre_ffm):.4f}  {[round(v,4) for v in pre_ffm.tolist()]}  (post-merge)")
+                    logging.info(f"[AGGREGATE]  ASA_pre : {np.mean(pre_asa):.4f} ± {np.std(pre_asa):.4f}  {[round(v,4) for v in pre_asa.tolist()]}  (post-merge)")
+                logging.info(f"[AGGREGATE]  FAA     : {np.mean(faa_arr):.4f} ± {np.std(faa_arr):.4f}  {[round(v,4) for v in faa_arr.tolist()]}  {'(post-align)' if has_align else ''}")
+                logging.info(f"[AGGREGATE]  FFM     : {np.mean(ffm_arr):.4f} ± {np.std(ffm_arr):.4f}  {[round(v,4) for v in ffm_arr.tolist()]}  {'(post-align)' if has_align else ''}")
+                logging.info(f"[AGGREGATE]  ASA     : {np.mean(asa_arr):.4f} ± {np.std(asa_arr):.4f}  {[round(v,4) for v in asa_arr.tolist()]}  {'(post-align)' if has_align else ''}")
+                if has_align:
+                    logging.info(f"[AGGREGATE]  ΔFAA    : {np.mean(faa_arr-pre_faa):+.4f} ± {np.std(faa_arr-pre_faa):.4f}  (align effect)")
+                    logging.info(f"[AGGREGATE]  ΔFFM    : {np.mean(ffm_arr-pre_ffm):+.4f} ± {np.std(ffm_arr-pre_ffm):.4f}  (align effect)")
+                    logging.info(f"[AGGREGATE]  ΔASA    : {np.mean(asa_arr-pre_asa):+.4f} ± {np.std(asa_arr-pre_asa):.4f}  (align effect)")
+            logging.info("[AGGREGATE] " + "─" * 57)
 
         logging.info("=" * 80 + "\n")
 
