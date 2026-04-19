@@ -87,11 +87,17 @@ class Learner:
             # Skipped for task 0 (single head — nothing to align across).
             if self._config.get("train_ca", False) and self._cur_task > 0:
                 t_eval = time.time()
-                _, faa_pre, ffm_pre, asa_pre, _ = self._eval_task_metrics()
+                _, faa_pre, ffm_pre, asa_pre, grouped_pre = self._eval_task_metrics()
                 self._total_eval_time += time.time() - t_eval
                 self._pre_align_faa = faa_pre
                 self._pre_align_ffm = ffm_pre
                 self._pre_align_asa = asa_pre
+                # Log full matrix at final task so it can be parsed into result.json
+                if self._total_classes == self._total_classnum:
+                    pre_matrix = self.mlp_matrix + [grouped_pre]
+                    logging.info("[Evaluation] Accuracy matrix (post-merge):")
+                    for row in pre_matrix:
+                        logging.info(f"  {[round(float(v), 2) for v in row]}")
 
             # ── Alignment ─────────────────────────────────────────────────────
             if self._config.get("train_ca", False):
@@ -485,7 +491,8 @@ class Learner:
         self._mlp_faa, self._mlp_ffm, self._mlp_asa = faa, ffm, asa
         logging.info(f"[Evaluation] Task {self._cur_task}: FAA={faa:.2f}, FFM={ffm:.2f}, ASA={asa:.2f}")
         if self._total_classes == self._total_classnum:
-            logging.info("[Evaluation] Accuracy matrix:")
+            label = "(post-align)" if self._config.get("train_ca", False) else ""
+            logging.info(f"[Evaluation] Accuracy matrix {label}:".strip())
             for row in self.mlp_matrix:
                 logging.info(f"  {[round(float(v), 2) for v in row]}")
             if len(self.mlp_matrix) > 1:
