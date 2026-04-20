@@ -36,7 +36,7 @@ BASE_CONFIG = {
 
     # Training
     "train_merge":        True,
-    "train_ca":           False,
+    "train_ca":           True,
 
     "train_ablation":     True,
     "train_epochs":       5,
@@ -70,16 +70,18 @@ EXPERIMENT_CONFIGS = {
 
         # Classifier alignment — method selection
         "train_ca_method":             "nes",  # "nes" | "ce"
-        "train_ca_samples_per_class":  512,    # synthetic samples per class
-        "train_ca_sample_method":      "covariance", # sampling distribution: "covariance" | "diagonal" | "variance"
+        
 
         # NES optimisation
         "train_ca_nes_sigma_init":           1e-3,   # initial exploration std
         "train_ca_nes_sigma_final":          1e-4,   # final exploration std (exponential decay)
         "train_ca_nes_lr":                   0.01,
-        "train_ca_nes_iterations":           100,
-        "train_ca_nes_popsize":              200,
         "train_ca_nes_label_smoothing":      0.1,    # label smoothing — prevents synthetic overfitting (CE floor ≈ -log(1-ε))
+
+        "train_ca_sample_method":            "covariance", # sampling distribution: "covariance" | "diagonal" | "variance"
+        "train_ca_samples_per_class":        512,    # synthetic samples per class
+        "train_ca_nes_popsize":              200,
+        "train_ca_nes_iterations":           100,
 
         # CE gradient-based alignment (train_ca_method = "ce")
         "train_ce_samples_per_class":        512,    # synthetic samples per class per epoch
@@ -97,17 +99,14 @@ EXPERIMENT_CONFIGS = {
 #
 # Example: to sweep NES learning rate, uncomment the "train_ca_nes_lr" line.
 PARAM_SWEEP = {
-    # ── NES core ──────────────────────────────────────────────────────────────
+    # ── Alignment ─────────────────────────────────────────────────────────────
+    "train_ca_sample_method":            ["covariance", "diagonal", "variance"],
+    # "train_ca_samples_per_class":        [256, 512, 1024],
     # "train_ca_nes_popsize":              [100, 200, 500],
     # "train_ca_nes_iterations":           [50, 100, 200],
-    # "train_ca_nes_patience":             [-1, 20, 50],
-
-    # ── Classifier alignment ──────────────────────────────────────────────────
-    # "train_ca_sample_method":            ["covariance", "diagonal", "variance"],
-    # "train_ca_samples_per_class":        [128, 256, 512, 1024],
 
     # ── Model merging ─────────────────────────────────────────────────────────
-    "model_merge_incremental":           [True, False],
+    # "model_merge_incremental":           [True, False],
     # "model_merge_coef":                  [0.1, 0.3, 0.5, 0.7, 1.0],
     # "model_merge":                       ["ties", "max", "max_abs", "avg", "min"],
 }
