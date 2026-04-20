@@ -1,9 +1,24 @@
 checkpoints/
 checkpoints_ca_sweep/
+checkpoints_ablation/
 logs/
 logs_ca_sweep/
+logs_ablation/
 __pycache__/
 *.pyc
 *.pyo
 .claude/
 CLAUDE.md
+
+# Results / data
+result.json
+ablation.json
+costs.json
+dataset_summary.txt
+
+# LaTeX build artifacts
+*.aux
+*.fdb_latexmk
+*.fls
+*.synctex.gz
+out/assets/tables/*.log

@@ -1,0 +1,102 @@
+\begin{table*}[!t]
+\centering
+\caption{Main results on seven class-incremental benchmarks with ViT-B/16-IN1K. Each cell reports the mean across three seeds (1993, 1994, 1995) with standard deviation as a subscript. Best result per column in \textbf{bold}, second best in \textit{italic}. Lower is better for FF.}
+\label{tab:overall}
+
+\begin{subtable}{\textwidth}
+  \centering
+  \caption{Final Accuracy (FA, \%) -- higher is better.}
+  \label{tab:overall-fa}
+  \renewcommand{\arraystretch}{0.95}
+\begin{adjustbox}{max width=\textwidth}
+\footnotesize
+\begin{tabular}{l c c c c c c c c}
+\toprule
+Method & \textbf{CIFAR100} & \textbf{IN-R} & \textbf{IN-A} & \textbf{CUB} & \textbf{OB} & \textbf{VTAB} & \textbf{CARS} & \textbf{Avg.} \\
+\midrule
+APER+Adapter & 84.85$_{\pm 0.40}$ & 72.50$_{\pm 0.15}$ & 59.15$_{\pm 0.42}$ & 80.95$_{\pm 0.04}$ & 70.16$_{\pm 0.20}$ & 83.14$_{\pm 1.33}$ & 35.32$_{\pm 0.02}$ & 69.44 \\
+APER+SSF & 84.31$_{\pm 0.49}$ & 71.67$_{\pm 0.23}$ & 59.09$_{\pm 1.05}$ & 81.41$_{\pm 0.47}$ & 70.14$_{\pm 0.34}$ & 84.95$_{\pm 1.09}$ & 35.99$_{\pm 0.35}$ & 69.65 \\
+APER+VPT-Deep & 84.66$_{\pm 0.54}$ & 72.50$_{\pm 0.41}$ & 58.96$_{\pm 0.54}$ & 82.76$_{\pm 0.28}$ & 71.65$_{\pm 0.47}$ & 85.30$_{\pm 2.12}$ & 41.85$_{\pm 0.40}$ & 71.10 \\
+CODA-Prompt & 85.98$_{\pm 0.16}$ & 73.93$_{\pm 0.16}$ & 36.14$_{\pm 1.69}$ & 73.44$_{\pm 0.72}$ & 65.48$_{\pm 0.46}$ & 89.25$_{\pm 0.72}$ & 47.52$_{\pm 0.68}$ & 67.39 \\
+DUCT & 76.44$_{\pm 0.96}$ & 68.11$_{\pm 0.81}$ & 33.96$_{\pm 0.55}$ & 53.99$_{\pm 1.66}$ & 47.76$_{\pm 0.62}$ & 69.33$_{\pm 1.67}$ & 14.90$_{\pm 0.87}$ & 52.07 \\
+DualPrompt & 84.77$_{\pm 0.45}$ & 72.40$_{\pm 0.60}$ & 56.41$_{\pm 1.34}$ & 70.09$_{\pm 1.58}$ & 64.90$_{\pm 0.84}$ & 78.03$_{\pm 2.11}$ & 33.09$_{\pm 0.36}$ & 65.67 \\
+EASE & 85.57$_{\pm 0.28}$ & 76.62$_{\pm 0.11}$ & 60.92$_{\pm 0.51}$ & 79.42$_{\pm 0.32}$ & 63.81$_{\pm 0.63}$ & 81.91$_{\pm 0.85}$ & 31.90$_{\pm 0.26}$ & 68.59 \\
+L2P & 83.64$_{\pm 0.34}$ & 74.61$_{\pm 0.18}$ & 47.67$_{\pm 0.93}$ & 70.67$_{\pm 0.37}$ & 65.00$_{\pm 0.64}$ & 69.35$_{\pm 2.51}$ & 41.86$_{\pm 2.22}$ & 64.69 \\
+MOS & 89.26$_{\pm 0.20}$ & 76.07$_{\pm 0.13}$ & 61.57$_{\pm 0.28}$ & \textit{87.92}$_{\pm 0.11}$ & \textbf{78.10}$_{\pm 0.49}$ & \textit{91.36}$_{\pm 0.47}$ & 67.22$_{\pm 0.16}$ & 78.79 \\
+SLCA & 89.13$_{\pm 0.19}$ & \textbf{81.64}$_{\pm 0.11}$ & 59.78$_{\pm 1.44}$ & 84.60$_{\pm 0.30}$ & 73.67$_{\pm 0.06}$ & 83.76$_{\pm 3.64}$ & 63.20$_{\pm 2.70}$ & 76.54 \\
+TUNA & \textbf{91.65}$_{\pm 0.05}$ & 79.71$_{\pm 0.14}$ & \textit{62.10}$_{\pm 0.27}$ & \textbf{89.04}$_{\pm 0.07}$ & \textit{77.42}$_{\pm 0.17}$ & \textbf{91.58}$_{\pm 0.68}$ & 60.94$_{\pm 0.20}$ & \textit{78.92} \\
+\midrule
+KCEA$_{\text{FT}}$ & 86.96$_{\pm 0.06}$ & 78.30$_{\pm 0.24}$ & 57.67$_{\pm 1.79}$ & 80.48$_{\pm 0.48}$ & 69.07$_{\pm 0.97}$ & 77.23$_{\pm 1.61}$ & 60.68$_{\pm 0.93}$ & 72.91 \\
+KCEA$_{\text{FT + Merge}}$ & 87.16$_{\pm 0.16}$ & 79.17$_{\pm 0.44}$ & 59.70$_{\pm 0.19}$ & 84.08$_{\pm 0.13}$ & 71.34$_{\pm 0.60}$ & 84.62$_{\pm 2.02}$ & \textit{68.87}$_{\pm 1.00}$ & 76.42 \\
+KCEA$_{\text{FT + Merge + Align}}$ & \textit{91.19}$_{\pm 0.09}$ & \textit{80.70}$_{\pm 0.75}$ & \textbf{64.07}$_{\pm 1.30}$ & 87.03$_{\pm 0.73}$ & 75.99$_{\pm 0.23}$ & 89.36$_{\pm 0.87}$ & \textbf{69.89}$_{\pm 0.50}$ & \textbf{79.75} \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{subtable}
+
+\vspace{0.6em}
+
+\begin{subtable}{\textwidth}
+  \centering
+  \caption{Accumulated Accuracy (AA, \%) -- higher is better.}
+  \label{tab:overall-aa}
+  \renewcommand{\arraystretch}{0.95}
+\begin{adjustbox}{max width=\textwidth}
+\footnotesize
+\begin{tabular}{l c c c c c c c c}
+\toprule
+Method & \textbf{CIFAR100} & \textbf{IN-R} & \textbf{IN-A} & \textbf{CUB} & \textbf{OB} & \textbf{VTAB} & \textbf{CARS} & \textbf{Avg.} \\
+\midrule
+APER+Adapter & 90.10$_{\pm 0.60}$ & 78.89$_{\pm 0.40}$ & 68.28$_{\pm 1.48}$ & 86.87$_{\pm 0.68}$ & 77.99$_{\pm 0.41}$ & 90.13$_{\pm 1.12}$ & 47.68$_{\pm 0.84}$ & 77.13 \\
+APER+SSF & 89.94$_{\pm 0.60}$ & 78.47$_{\pm 0.41}$ & 68.68$_{\pm 0.47}$ & 86.97$_{\pm 0.53}$ & 78.52$_{\pm 0.39}$ & 91.73$_{\pm 1.37}$ & 47.99$_{\pm 0.50}$ & 77.47 \\
+APER+VPT-Deep & 90.24$_{\pm 0.64}$ & 79.35$_{\pm 0.78}$ & 68.26$_{\pm 1.64}$ & 87.99$_{\pm 0.89}$ & 79.49$_{\pm 0.06}$ & 92.01$_{\pm 2.20}$ & 54.22$_{\pm 0.40}$ & 78.79 \\
+CODA-Prompt & 91.07$_{\pm 0.10}$ & 79.37$_{\pm 0.27}$ & 54.68$_{\pm 1.10}$ & 80.74$_{\pm 0.07}$ & 71.26$_{\pm 0.13}$ & 89.50$_{\pm 0.62}$ & 52.92$_{\pm 0.27}$ & 74.22 \\
+DUCT & 84.33$_{\pm 0.45}$ & 74.42$_{\pm 0.96}$ & 47.97$_{\pm 1.40}$ & 64.80$_{\pm 1.65}$ & 61.39$_{\pm 1.75}$ & 80.56$_{\pm 3.45}$ & 23.35$_{\pm 0.81}$ & 62.40 \\
+DualPrompt & 89.66$_{\pm 0.50}$ & 77.60$_{\pm 0.11}$ & 65.85$_{\pm 1.22}$ & 78.83$_{\pm 1.06}$ & 75.53$_{\pm 0.58}$ & 87.35$_{\pm 3.10}$ & 48.93$_{\pm 1.82}$ & 74.82 \\
+EASE & 91.02$_{\pm 0.12}$ & 82.56$_{\pm 0.33}$ & \textit{70.14}$_{\pm 1.65}$ & 85.58$_{\pm 0.81}$ & 73.36$_{\pm 1.12}$ & 89.80$_{\pm 1.22}$ & 45.94$_{\pm 0.94}$ & 76.91 \\
+L2P & 88.57$_{\pm 0.19}$ & 78.85$_{\pm 0.15}$ & 55.51$_{\pm 1.60}$ & 78.30$_{\pm 1.42}$ & 75.32$_{\pm 0.86}$ & 82.91$_{\pm 3.92}$ & 52.20$_{\pm 1.86}$ & 73.09 \\
+MOS & 92.97$_{\pm 0.28}$ & 81.08$_{\pm 0.38}$ & 68.20$_{\pm 0.76}$ & 91.62$_{\pm 0.49}$ & \textbf{85.18}$_{\pm 0.38}$ & 94.57$_{\pm 0.80}$ & 74.28$_{\pm 0.44}$ & 83.98 \\
+SLCA & 93.05$_{\pm 0.18}$ & \textit{85.75}$_{\pm 0.18}$ & 67.59$_{\pm 1.20}$ & 89.60$_{\pm 0.77}$ & 82.06$_{\pm 0.34}$ & 91.87$_{\pm 2.18}$ & 71.30$_{\pm 2.12}$ & 83.03 \\
+TUNA & \textbf{94.84}$_{\pm 0.12}$ & 84.33$_{\pm 0.46}$ & 69.15$_{\pm 0.81}$ & \textbf{92.57}$_{\pm 0.66}$ & \textit{84.20}$_{\pm 0.69}$ & \textbf{95.22}$_{\pm 0.91}$ & 71.63$_{\pm 1.09}$ & \textit{84.56} \\
+\midrule
+KCEA$_{\text{FT}}$ & 92.01$_{\pm 0.16}$ & 83.96$_{\pm 0.50}$ & 68.06$_{\pm 1.94}$ & 87.42$_{\pm 1.51}$ & 79.40$_{\pm 0.67}$ & 87.87$_{\pm 0.65}$ & 71.00$_{\pm 1.22}$ & 81.39 \\
+KCEA$_{\text{FT + Merge}}$ & 92.42$_{\pm 1.11}$ & 85.36$_{\pm 0.06}$ & 69.51$_{\pm 0.89}$ & 90.22$_{\pm 1.05}$ & 79.93$_{\pm 0.41}$ & 92.13$_{\pm 1.46}$ & \textit{78.62}$_{\pm 0.63}$ & 84.03 \\
+KCEA$_{\text{FT + Merge + Align}}$ & \textit{94.67}$_{\pm 0.06}$ & \textbf{86.01}$_{\pm 0.27}$ & \textbf{73.28}$_{\pm 1.08}$ & \textit{92.46}$_{\pm 0.17}$ & 82.93$_{\pm 0.22}$ & \textit{94.69}$_{\pm 0.38}$ & \textbf{78.74}$_{\pm 0.64}$ & \textbf{86.11} \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{subtable}
+
+\vspace{0.6em}
+
+\begin{subtable}{\textwidth}
+  \centering
+  \caption{Final Forgetting (FF, \%) -- lower is better.}
+  \label{tab:overall-ff}
+  \renewcommand{\arraystretch}{0.95}
+\begin{adjustbox}{max width=\textwidth}
+\footnotesize
+\begin{tabular}{l c c c c c c c c}
+\toprule
+Method & \textbf{CIFAR100} & \textbf{IN-R} & \textbf{IN-A} & \textbf{CUB} & \textbf{OB} & \textbf{VTAB} & \textbf{CARS} & \textbf{Avg.} \\
+\midrule
+APER+Adapter & 5.29$_{\pm 0.11}$ & 5.74$_{\pm 0.11}$ & 9.92$_{\pm 0.70}$ & 6.76$_{\pm 0.63}$ & 8.67$_{\pm 0.22}$ & 7.90$_{\pm 2.46}$ & 13.45$_{\pm 0.60}$ & 8.25 \\
+APER+SSF & 5.16$_{\pm 0.10}$ & 5.34$_{\pm 0.17}$ & 9.03$_{\pm 0.89}$ & 6.27$_{\pm 0.82}$ & 8.74$_{\pm 0.22}$ & 6.99$_{\pm 2.03}$ & 12.82$_{\pm 0.34}$ & 7.77 \\
+APER+VPT-Deep & 5.20$_{\pm 0.19}$ & 5.49$_{\pm 0.09}$ & 8.81$_{\pm 0.37}$ & 5.76$_{\pm 0.40}$ & 8.43$_{\pm 0.12}$ & 6.54$_{\pm 2.79}$ & 12.10$_{\pm 0.16}$ & 7.48 \\
+CODA-Prompt & 5.09$_{\pm 0.08}$ & 4.39$_{\pm 0.17}$ & \textbf{6.12}$_{\pm 0.57}$ & 5.15$_{\pm 0.39}$ & 11.37$_{\pm 0.50}$ & \textbf{3.81}$_{\pm 0.83}$ & 10.57$_{\pm 0.85}$ & \textit{6.64} \\
+DUCT & 6.69$_{\pm 0.66}$ & 4.15$_{\pm 0.24}$ & 7.54$_{\pm 1.02}$ & 10.19$_{\pm 0.49}$ & 11.24$_{\pm 0.71}$ & 12.26$_{\pm 2.42}$ & 9.31$_{\pm 0.74}$ & 8.77 \\
+DualPrompt & 5.26$_{\pm 0.62}$ & \textbf{3.52}$_{\pm 0.38}$ & 7.95$_{\pm 0.83}$ & 6.36$_{\pm 0.85}$ & \textbf{6.56}$_{\pm 0.91}$ & 13.26$_{\pm 3.75}$ & 8.85$_{\pm 0.29}$ & 7.39 \\
+EASE & 7.15$_{\pm 0.75}$ & 7.02$_{\pm 0.09}$ & 11.07$_{\pm 0.97}$ & 10.28$_{\pm 0.68}$ & 15.17$_{\pm 1.54}$ & 9.29$_{\pm 2.00}$ & 18.86$_{\pm 2.24}$ & 11.26 \\
+L2P & 7.69$_{\pm 0.12}$ & \textit{3.98}$_{\pm 0.45}$ & \textit{6.66}$_{\pm 0.20}$ & 6.41$_{\pm 0.83}$ & 13.83$_{\pm 1.15}$ & 18.45$_{\pm 5.91}$ & \textit{7.96}$_{\pm 1.25}$ & 9.28 \\
+MOS & \textit{4.23}$_{\pm 0.09}$ & 5.56$_{\pm 0.22}$ & 8.61$_{\pm 0.86}$ & \textbf{4.44}$_{\pm 0.40}$ & \textit{7.54}$_{\pm 0.33}$ & \textit{4.09}$_{\pm 0.31}$ & \textbf{7.77}$_{\pm 0.49}$ & \textbf{6.03} \\
+SLCA & 6.95$_{\pm 0.42}$ & 6.47$_{\pm 0.19}$ & 12.20$_{\pm 1.55}$ & 10.26$_{\pm 0.72}$ & 19.68$_{\pm 0.15}$ & 14.65$_{\pm 4.65}$ & 31.51$_{\pm 3.32}$ & 14.53 \\
+TUNA & \textbf{3.46}$_{\pm 0.26}$ & 6.63$_{\pm 0.23}$ & 11.75$_{\pm 0.82}$ & \textit{4.65}$_{\pm 0.38}$ & 9.66$_{\pm 0.75}$ & 4.40$_{\pm 0.76}$ & 19.25$_{\pm 0.40}$ & 8.54 \\
+\midrule
+KCEA$_{\text{FT}}$ & 8.80$_{\pm 0.62}$ & 11.36$_{\pm 0.70}$ & 15.23$_{\pm 1.57}$ & 9.11$_{\pm 1.14}$ & 20.27$_{\pm 0.91}$ & 19.31$_{\pm 3.12}$ & 21.44$_{\pm 3.87}$ & 15.07 \\
+KCEA$_{\text{FT + Merge}}$ & 7.81$_{\pm 0.38}$ & 10.26$_{\pm 1.98}$ & 13.15$_{\pm 1.57}$ & 7.20$_{\pm 0.57}$ & 16.06$_{\pm 1.18}$ & 9.83$_{\pm 1.68}$ & 16.09$_{\pm 0.30}$ & 11.49 \\
+KCEA$_{\text{FT + Merge + Align}}$ & 5.54$_{\pm 0.22}$ & 6.75$_{\pm 0.72}$ & 11.47$_{\pm 1.43}$ & 6.01$_{\pm 1.50}$ & 10.23$_{\pm 2.07}$ & 7.37$_{\pm 0.36}$ & 13.46$_{\pm 5.75}$ & 8.69 \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{subtable}
+\end{table*}

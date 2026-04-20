@@ -1,0 +1,30 @@
+\begin{table*}[!t]
+\centering
+\caption{Final Accuracy (FA, \%) on seven CIL benchmarks. Each cell shows the mean across three seeds (1993, 1994, 1995) with the standard deviation as a subscript. Best result per column in \textbf{bold}, second best in \textit{italic}.}
+\label{tab:overall-fa-standalone}
+\renewcommand{\arraystretch}{0.95}
+\begin{adjustbox}{max width=\textwidth}
+\footnotesize
+\begin{tabular}{l c c c c c c c c}
+\toprule
+Method & \textbf{CIFAR100} & \textbf{IN-R} & \textbf{IN-A} & \textbf{CUB} & \textbf{OB} & \textbf{VTAB} & \textbf{CARS} & \textbf{Avg.} \\
+\midrule
+APER+Adapter & 84.85$_{\pm 0.40}$ & 72.50$_{\pm 0.15}$ & 59.15$_{\pm 0.42}$ & 80.95$_{\pm 0.04}$ & 70.16$_{\pm 0.20}$ & 83.14$_{\pm 1.33}$ & 35.33$_{\pm 0.05}$ & 69.44 \\
+APER+SSF & 84.31$_{\pm 0.49}$ & 71.67$_{\pm 0.23}$ & 59.09$_{\pm 1.05}$ & 81.41$_{\pm 0.47}$ & 70.14$_{\pm 0.34}$ & 84.95$_{\pm 1.09}$ & 36.04$_{\pm 0.41}$ & 69.66 \\
+APER+VPT-Deep & 84.66$_{\pm 0.54}$ & 72.50$_{\pm 0.41}$ & 58.96$_{\pm 0.54}$ & 82.76$_{\pm 0.28}$ & 71.65$_{\pm 0.47}$ & 85.30$_{\pm 2.12}$ & 42.01$_{\pm 0.41}$ & 71.12 \\
+CODA-Prompt & 85.98$_{\pm 0.16}$ & 73.93$_{\pm 0.16}$ & 36.14$_{\pm 1.69}$ & 73.44$_{\pm 0.72}$ & 65.48$_{\pm 0.46}$ & 89.25$_{\pm 0.72}$ & 47.76$_{\pm 0.61}$ & 67.42 \\
+DUCT & 76.44$_{\pm 0.96}$ & 68.11$_{\pm 0.81}$ & 33.96$_{\pm 0.55}$ & 53.99$_{\pm 1.66}$ & 47.76$_{\pm 0.62}$ & 69.33$_{\pm 1.67}$ & 14.89$_{\pm 0.77}$ & 52.07 \\
+DualPrompt & 84.77$_{\pm 0.45}$ & 72.40$_{\pm 0.60}$ & 56.41$_{\pm 1.34}$ & 70.09$_{\pm 1.58}$ & 64.90$_{\pm 0.84}$ & 78.03$_{\pm 2.11}$ & 33.30$_{\pm 0.42}$ & 65.70 \\
+EASE & 85.57$_{\pm 0.28}$ & 76.62$_{\pm 0.11}$ & 60.92$_{\pm 0.51}$ & 79.42$_{\pm 0.32}$ & 63.81$_{\pm 0.63}$ & 81.91$_{\pm 0.85}$ & 31.81$_{\pm 0.29}$ & 68.58 \\
+L2P & 83.64$_{\pm 0.34}$ & 74.61$_{\pm 0.18}$ & 47.67$_{\pm 0.93}$ & 70.67$_{\pm 0.37}$ & 65.00$_{\pm 0.64}$ & 69.35$_{\pm 2.51}$ & 41.98$_{\pm 2.09}$ & 64.70 \\
+MOS & \textit{89.26}$_{\pm 0.20}$ & 76.07$_{\pm 0.13}$ & \textit{61.57}$_{\pm 0.28}$ & \textit{87.92}$_{\pm 0.11}$ & \textbf{78.10}$_{\pm 0.49}$ & \textit{91.36}$_{\pm 0.47}$ & \textbf{67.23}$_{\pm 0.16}$ & \textit{78.79} \\
+SLCA & 89.13$_{\pm 0.19}$ & \textbf{81.64}$_{\pm 0.11}$ & 59.78$_{\pm 1.44}$ & 84.60$_{\pm 0.30}$ & 73.67$_{\pm 0.06}$ & 83.76$_{\pm 3.64}$ & \textit{62.32}$_{\pm 2.74}$ & 76.41 \\
+TUNA & \textbf{91.65}$_{\pm 0.05}$ & \textit{79.71}$_{\pm 0.14}$ & \textbf{62.10}$_{\pm 0.27}$ & \textbf{89.04}$_{\pm 0.07}$ & \textit{77.42}$_{\pm 0.17}$ & \textbf{91.58}$_{\pm 0.68}$ & 61.22$_{\pm 0.22}$ & \textbf{78.96} \\
+\midrule
+KCEA$_{\text{FT}}$ & -- & -- & -- & -- & -- & -- & -- & -- \\
+KCEA$_{\text{FT + Merge}}$ & -- & -- & -- & -- & -- & -- & -- & -- \\
+KCEA$_{\text{FT + Merge + Align}}$ & -- & -- & -- & -- & -- & -- & -- & -- \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{table*}

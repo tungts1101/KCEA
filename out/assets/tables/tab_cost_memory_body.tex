@@ -1,0 +1,24 @@
+\renewcommand{\arraystretch}{0.95}
+\begin{adjustbox}{max width=\textwidth}
+\footnotesize
+\begin{tabular}{l c c}
+\toprule
+Method & \textbf{Peak train. RAM (MB)} $\downarrow$ & \textbf{Final RAM (MB)} $\downarrow$ \\
+\midrule
+APER+Adapter & -- & -- \\
+APER+SSF & -- & -- \\
+APER+VPT-Deep & -- & -- \\
+CODA-Prompt & -- & -- \\
+DUCT & -- & -- \\
+DualPrompt & -- & -- \\
+EASE & -- & -- \\
+L2P & -- & -- \\
+MOS & -- & -- \\
+SLCA & -- & -- \\
+TUNA & -- & -- \\
+\midrule
+KCEA & -- & -- \\
+\multicolumn{3}{l}{\scriptsize All values exclude the shared frozen backbone (327\,MB, ViT-B/16). For KCEA, final RAM includes class-conditional Gaussian statistics ($\mu_c, \Sigma_c$).} \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}

@@ -1,0 +1,17 @@
+\begin{table}[!t]
+\centering
+\caption{Ablation on incremental vs.\ full re-merge on VTAB. Mean $\pm$ std across three seeds (1993, 1994, 1995). Best result per column in \textbf{bold}.}
+\label{tab:ablation-merge-incremental}
+\renewcommand{\arraystretch}{0.95}
+\begin{adjustbox}{max width=\textwidth}
+\footnotesize
+\begin{tabular}{l c c c}
+\toprule
+Setting & \textbf{FA (\%)} $\uparrow$ & \textbf{AA (\%)} $\uparrow$ & \textbf{FF (\%)} $\downarrow$ \\
+\midrule
+Incremental Merge & 76.61$_{\pm 4.61}$ & 85.91$_{\pm 3.84}$ & \textbf{18.60}$_{\pm 3.10}$ \\
+Full Merge & \textbf{76.62}$_{\pm 3.93}$ & \textbf{86.38}$_{\pm 3.70}$ & 19.25$_{\pm 3.68}$ \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{table}

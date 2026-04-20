@@ -22,8 +22,8 @@
 DATA_TABLE = {
     # "cifar224":         [(10, 10, 10)],
     # "imagenetr":        [(10, 20, 20)],
-    # "imageneta":        [(10, 20, 20)],
-    # "cub":              [(10, 20, 20)],
+    "imageneta":        [(10, 20, 20)],
+    "cub":              [(10, 20, 20)],
     # "omnibenchmark":    [(10, 30, 30)],
     "vtab":             [(5,  10, 10)],
     # "cars":             [(10, 16, 20)]
@@ -32,22 +32,22 @@ DATA_TABLE = {
 
 # ── Base training hyperparameters (shared across all experiments) ─────────────
 BASE_CONFIG = {
-    "seed": [1991, 1992, 1993, 1994, 1995, 1996, 1997],
+    "seed": [1, 2, 3],
 
     # Training
     "train_merge":        True,
-    "train_ca":           True,
+    "train_ca":           False,
 
-    "train_ablation":     False,
-    "train_epochs":       10,
+    "train_ablation":     True,
+    "train_epochs":       5,
     "train_batch_size":   64,
     "train_base_lr":      1e-2,
     "train_weight_decay": 5e-4,
 
     # Backbone / LoRA
     "model_backbone":             "vit_base_patch16_224_lora",
-    "model_lora_r":               64,
-    "model_lora_alpha":           128,
+    "model_lora_r":               16,
+    "model_lora_alpha":           32,
     "model_lora_dropout":         0.0,
     "model_lora_target_modules":  ["qkv"],
     "model_use_norm":             True,
@@ -58,11 +58,9 @@ BASE_CONFIG = {
 # Each key is an experiment name; its dict is merged on top of BASE_CONFIG.
 # You can define multiple variants here to compare them in a single run.
 EXPERIMENT_CONFIGS = {
-    # ── Full model: fine-tuning + merging + classifier alignment ─────────────
-    "kcea": {
-        "train_prefix": "kcea",
-        "train_merge":  True,
-        "train_ca":     True,
+    # ── Ablation: fine-tuning + merging only (no classifier alignment) ────────
+    "kcea_ablation": {
+        "train_prefix": "kcea_ablation",
 
         # Parameter merging
         "model_merge":             "max",
@@ -109,7 +107,7 @@ PARAM_SWEEP = {
     # "train_ca_samples_per_class":        [128, 256, 512, 1024],
 
     # ── Model merging ─────────────────────────────────────────────────────────
-    # "model_merge_incremental":           [True, False],
+    "model_merge_incremental":           [True, False],
     # "model_merge_coef":                  [0.1, 0.3, 0.5, 0.7, 1.0],
-    # "model_merge":                       ["ties", "max", "max_abs", "min", "avg"],
+    # "model_merge":                       ["ties", "max", "max_abs", "avg", "min"],
 }

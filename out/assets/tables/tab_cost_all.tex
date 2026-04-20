@@ -1,0 +1,97 @@
+\begin{table*}[!t]
+\centering
+\caption{Cost analysis comparing KCEA against baselines on seven benchmarks. Each cell reports the mean $\pm$ std across datasets. Best (lowest) per column in \textbf{bold}. Alignment time is shown only for KCEA; baselines have no alignment step.}
+\label{tab:cost-all}
+
+\begin{subtable}{\textwidth}
+  \centering
+  \caption{Trainable parameters.}
+  \label{tab:cost-params}
+  \renewcommand{\arraystretch}{0.95}
+\begin{adjustbox}{max width=\textwidth}
+\footnotesize
+\begin{tabular}{l c c c c}
+\toprule
+Method & \textbf{Peak train. (M)} $\downarrow$ & \textbf{Final (M)} $\downarrow$ & \textbf{Total (M)} $\downarrow$ & \textbf{Share (\%)} $\downarrow$ \\
+\midrule
+APER+Adapter & -- & -- & -- & -- \\
+APER+SSF & -- & -- & -- & -- \\
+APER+VPT-Deep & -- & -- & -- & -- \\
+CODA-Prompt & -- & -- & -- & -- \\
+DUCT & -- & -- & -- & -- \\
+DualPrompt & -- & -- & -- & -- \\
+EASE & -- & -- & -- & -- \\
+L2P & -- & -- & -- & -- \\
+MOS & -- & -- & -- & -- \\
+SLCA & -- & -- & -- & -- \\
+TUNA & -- & -- & -- & -- \\
+\midrule
+KCEA & -- & -- & -- & -- \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{subtable}
+
+\vspace{0.6em}
+
+\begin{subtable}{\textwidth}
+  \centering
+  \caption{Memory cost (MB).}
+  \label{tab:cost-memory}
+  \renewcommand{\arraystretch}{0.95}
+\begin{adjustbox}{max width=\textwidth}
+\footnotesize
+\begin{tabular}{l c c}
+\toprule
+Method & \textbf{Peak train. RAM (MB)} $\downarrow$ & \textbf{Final RAM (MB)} $\downarrow$ \\
+\midrule
+APER+Adapter & -- & -- \\
+APER+SSF & -- & -- \\
+APER+VPT-Deep & -- & -- \\
+CODA-Prompt & -- & -- \\
+DUCT & -- & -- \\
+DualPrompt & -- & -- \\
+EASE & -- & -- \\
+L2P & -- & -- \\
+MOS & -- & -- \\
+SLCA & -- & -- \\
+TUNA & -- & -- \\
+\midrule
+KCEA & -- & -- \\
+\multicolumn{3}{l}{\scriptsize All values exclude the shared frozen backbone (327\,MB, ViT-B/16). For KCEA, final RAM includes class-conditional Gaussian statistics ($\mu_c, \Sigma_c$).} \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{subtable}
+
+\vspace{0.6em}
+
+\begin{subtable}{\textwidth}
+  \centering
+  \caption{Wall-clock time (s, cumulative across all tasks).}
+  \label{tab:cost-time}
+  \renewcommand{\arraystretch}{0.95}
+\begin{adjustbox}{max width=\textwidth}
+\footnotesize
+\begin{tabular}{l c c c}
+\toprule
+Method & \textbf{Training (s)} $\downarrow$ & \textbf{Evaluation (s)} & \textbf{Alignment (s)} \\
+\midrule
+APER+Adapter & -- & -- & -- \\
+APER+SSF & -- & -- & -- \\
+APER+VPT-Deep & -- & -- & -- \\
+CODA-Prompt & -- & -- & -- \\
+DUCT & -- & -- & -- \\
+DualPrompt & -- & -- & -- \\
+EASE & -- & -- & -- \\
+L2P & -- & -- & -- \\
+MOS & -- & -- & -- \\
+SLCA & -- & -- & -- \\
+TUNA & -- & -- & -- \\
+\midrule
+KCEA & -- & -- & -- \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{subtable}
+\end{table*}
