@@ -21,4 +21,4 @@ dataset_summary.txt
 *.fdb_latexmk
 *.fls
 *.synctex.gz
-out/assets/tables/*.log
+out/

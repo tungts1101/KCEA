@@ -861,7 +861,7 @@ class Learner:
 
         if self._cur_task > 0:
             base_params = torch.load(self.backbone_checkpoint(-1))
-            logging.info(f"[Merging] Method {self._config['model_merge']}")
+            logging.info(f"[Merging] Method {self._config['model_merge_method']}")
 
             if self._config.get("model_merge_incremental", False):
                 task_params = [
@@ -878,7 +878,7 @@ class Learner:
             backbone_params = merge(
                 base_params,
                 task_params,
-                method=self._config["model_merge"],
+                method=self._config["model_merge_method"],
                 lamb=self._config["model_merge_coef"],
                 topk=self._config["model_merge_topk"],
             )
@@ -916,7 +916,7 @@ class Learner:
         return self._ckpt_path(filename)
 
     def merged_checkpoint(self, task):
-        filename = f"{self.prefix()}_merged_{self._config['model_merge']}_{task}.pt"
+        filename = f"{self.prefix()}_merged_{self._config['model_merge_method']}_{task}.pt"
         return self._ckpt_path(filename)
 
 
@@ -946,6 +946,9 @@ def run_single_experiment(dataset_name, config_name, experiment_config, seed):
     logging.info(f"Dataset Training Size: {data_manager.train_set_size}")
 
     config.update(experiment_config)
+
+    # Keep model_lora_alpha in sync: always 2× model_lora_r
+    config["model_lora_alpha"] = 2 * config["model_lora_r"]
 
     if dataset_name == "imageneta":
         config["train_batch_size"] = 48
