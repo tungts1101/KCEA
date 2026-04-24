@@ -36,7 +36,7 @@ BASE_CONFIG = {
 
     # Training
     "train_merge":        True,
-    "train_ca":           False,
+    "train_ca":           True,
 
     "train_ablation":     True,
     "train_epochs":       10,
@@ -101,13 +101,13 @@ EXPERIMENT_CONFIGS = {
 PARAM_SWEEP = {
     # "model_lora_r":                     [16, 32, 64, 128],
     # ── Alignment ─────────────────────────────────────────────────────────────
-    # "train_ca_sample_method":            ["covariance", "diagonal", "variance"],
+    "train_ca_sample_method":            ["covariance", "diagonal", "variance"],
     # "train_ca_samples_per_class":        [256, 512, 1024],
     # "train_ca_nes_popsize":              [100, 200, 500],
     # "train_ca_nes_iterations":           [50, 100, 200],
 
     # ── Model merging ─────────────────────────────────────────────────────────
-    "model_merge_incremental":           [True, False],
+    #"model_merge_incremental":           [True, False],
     # "model_merge_coef":                  [0.1, 0.3, 0.5, 0.7, 1.0],
     # "model_merge_method":                ["ties", "max", "max_abs", "avg", "min"],
 }
